@@ -743,7 +743,7 @@ function createResponse(obj) {
         const isIco = fmt === "ico" || img.url.toLowerCase().includes(".ico") || img.url.toLowerCase().includes("favicon");
         if (standard.has(fmt) || isIco) return false;
       } else {
-        if (fmt !== selectedFormat.toLowerCase()) return false;
+        if (fmt !== (selectedFormat as string).toLowerCase()) return false;
       }
     }
 
@@ -801,14 +801,14 @@ function createResponse(obj) {
           
           {/* Logo & Branding */}
           <div className="text-center space-y-2">
-            <div className="inline-flex w-12 h-12 bg-indigo-600 rounded-2xl items-center justify-center text-white font-bold text-xl shadow-md transform rotate-3">
-              Y
+            <div className="inline-flex w-12 h-12 rounded-2xl items-center justify-center p-1.5 bg-white border border-slate-200 shadow-md">
+              <img src="/yib.svg" alt="Asset Scrap Logo" className="w-full h-full object-contain" />
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              Assets Scrap by Yanginibeda.com
+              Asset Scrap - Solusi Digital Pengelolaan Aset Bekas dan Scrap
             </h1>
-            <p className="text-xs text-slate-500 font-medium">
-              Grabe Assets instantly from any public website or search engine.
+            <p className="text-xs text-slate-500 font-medium max-w-md mx-auto">
+              Platform pengelolaan aset tidak terpakai, barang bekas, dan scrap industri secara mudah, transparan, dan efisien.
             </p>
           </div>
 
@@ -1050,12 +1050,15 @@ function createResponse(obj) {
       {/* Main Top Header */}
       <header className="h-16 bg-white border-b border-slate-200 sticky top-0 z-30 px-6 flex items-center justify-between shrink-0 shadow-xs">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-indigo-600 rounded flex items-center justify-center text-white font-bold font-display shadow-sm">
-            Y
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center p-1 bg-white border border-slate-200 shadow-xs shrink-0">
+            <img src="/yib.svg" alt="Asset Scrap Logo" className="w-full h-full object-contain" />
           </div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight">
-            Assets Scrap <span className="text-indigo-600 font-sans font-semibold text-xs ml-2 py-0.5 px-1.5 rounded-md bg-indigo-50 border border-indigo-100 font-mono">v2.5</span>
-          </h1>
+          <div>
+            <h1 className="text-lg md:text-xl font-bold text-slate-900 tracking-tight leading-none">
+              Asset Scrap <span className="text-indigo-600 font-sans font-semibold text-xs ml-1 py-0.5 px-1.5 rounded-md bg-indigo-50 border border-indigo-100 font-mono">v2.5</span>
+            </h1>
+            <p className="text-[10px] text-slate-500 hidden sm:block mt-0.5">Solusi Digital Pengelolaan Aset Bekas dan Scrap</p>
+          </div>
         </div>
 
         <div className="flex items-center gap-4">
@@ -1069,7 +1072,7 @@ function createResponse(obj) {
                 {currentUser.fullName || currentUser.username}
               </span>
               <span className="text-[9px] uppercase font-bold text-indigo-550 tracking-widest leading-none mt-0.5 font-mono">
-                {appScriptUrl ? "Google Sheet Linked" : "Local Dev Sheet"}
+                {appScriptUrl ? "Online" : "Offline"} | {currentUser.status === "APPROVED" ? "Active" : currentUser.status === "PENDING" ? "Pending" : "Rejected" }
               </span>
             </div>
           </div>
@@ -1096,6 +1099,13 @@ function createResponse(obj) {
           {/* Main Scrape input panel card */}
           <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs flex flex-col space-y-6 text-slate-800">
             
+            <div className="border-b border-slate-100 pb-2">
+              <h2 className="text-sm font-bold text-slate-800 tracking-tight flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-indigo-600" />
+                Kelola Data Scrap Lebih Mudah dan Terstruktur
+              </h2>
+            </div>
+
             {/* Nav switcher tab titles */}
             <div className="grid grid-cols-2 p-1.5 bg-slate-100 rounded-2xl border border-slate-200">
               <button
@@ -1495,7 +1505,7 @@ function createResponse(obj) {
                 <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-3 gap-2">
                   <div className="flex items-center gap-2">
                     <Filter className="w-4 h-4 text-indigo-600" />
-                    <h3 className="font-display font-semibold text-sm text-slate-900">Direct Sorting & Filters</h3>
+                    <h2 className="font-display font-semibold text-sm text-slate-900">Fitur Manajemen Asset Scrap</h2>
                   </div>
 
                   <div className="flex items-center gap-3">
@@ -1965,8 +1975,13 @@ function createResponse(obj) {
         />
       )}
 
-      <footer className="mt-auto border-t border-slate-205 bg-white py-6 text-center text-xs text-slate-400 font-mono">
-        <p>© 2026 Assets Scrap • Robust CORS Bypass Proxy • Balanced Geometry Interface Design.</p>
+      <footer className="mt-auto border-t border-slate-200 bg-white py-6 text-center text-xs text-slate-500 space-y-1.5 px-4">
+        <p className="font-medium text-slate-700">
+          <a href="https://www.ascrap.yanginibeda.web.id/" className="hover:text-indigo-600 font-bold">Asset Scrap</a> — Solusi Digital Pengelolaan Aset Bekas, Inventaris & Scrap Industri Terintegrasi.
+        </p>
+        <p className="text-[11px] text-slate-400 font-mono">
+          © 2026 Asset Scrap (<a href="https://www.ascrap.yanginibeda.web.id/" className="underline hover:text-slate-600">ascrap.yanginibeda.web.id</a>) • Sistem Asset Scrap & Manajemen Scrap Digital.
+        </p>
       </footer>
 
     </div>

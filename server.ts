@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import * as cheerio from "cheerio";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
@@ -11,7 +10,7 @@ import fs from "fs";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Set up server-side Gemini client
 const ai = new GoogleGenAI({
@@ -22,36 +21,77 @@ const ai = new GoogleGenAI({
     },
   },
 });
-console.debug(process.env.GEMINI_API_KEY)
+console.debug(process.env.GEMINI_API_KEY);
+
+// CORS & Preflight handler
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Normalize request path so that both /api/foo and /foo match when routed via Vercel or locally
+app.use((req, res, next) => {
+  if (!req.url.startsWith("/api")) {
+    if (
+      req.url.startsWith("/auth") ||
+      req.url.startsWith("/config") ||
+      req.url.startsWith("/scrape") ||
+      req.url.startsWith("/search") ||
+      req.url.startsWith("/proxy") ||
+      req.url.startsWith("/gemini")
+    ) {
+      req.url = "/api" + req.url;
+    }
+  }
+  next();
+});
 
 app.use(express.json({ limit: "5mb" }));
 
-const LOCAL_DB_PATH = path.join(process.cwd(), "users-local-db.json");
+const isVercel = Boolean(process.env.VERCEL);
+const ROOT_DB_PATH = path.join(process.cwd(), "users-local-db.json");
+const LOCAL_DB_PATH = isVercel ? path.join("/tmp", "users-local-db.json") : ROOT_DB_PATH;
 
 // Make sure local DB exists
 function initLocalDB() {
-  if (!fs.existsSync(LOCAL_DB_PATH)) {
-    const defaultData = {
-      users: [
-        {
-          username: "admin",
-          password: "admin123",
-          email: "admin@yanginibeda.com",
-          fullName: "System Admin",
-          status: "APPROVED",
-          createdAt: new Date().toISOString()
-        },
-        {
-          username: "tester",
-          password: "tester123",
-          email: "tester@gmail.com",
-          fullName: "Pending Tester Profile",
-          status: "PENDING",
-          createdAt: new Date().toISOString()
-        }
-      ]
-    };
-    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(defaultData, null, 2), "utf-8");
+  try {
+    if (!fs.existsSync(LOCAL_DB_PATH)) {
+      if (fs.existsSync(ROOT_DB_PATH)) {
+        try {
+          const initialContent = fs.readFileSync(ROOT_DB_PATH, "utf-8");
+          fs.writeFileSync(LOCAL_DB_PATH, initialContent, "utf-8");
+          return;
+        } catch (_) {}
+      }
+      const defaultData = {
+        users: [
+          {
+            username: "admin",
+            password: "admin123",
+            email: "admin@yanginibeda.com",
+            fullName: "System Admin",
+            status: "APPROVED",
+            createdAt: new Date().toISOString()
+          },
+          {
+            username: "tester",
+            password: "tester123",
+            email: "tester@gmail.com",
+            fullName: "Pending Tester Profile",
+            status: "PENDING",
+            createdAt: new Date().toISOString()
+          }
+        ]
+      };
+      fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(defaultData, null, 2), "utf-8");
+    }
+  } catch (err) {
+    console.error("Error initializing local db", err);
   }
 }
 
@@ -1047,6 +1087,7 @@ app.post("/api/gemini/analyze", async (req, res) => {
 // Integrate Vite Middleware for Client Application Access
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -1065,4 +1106,9 @@ async function startServer() {
   });
 }
 
-startServer();
+// Only start the HTTP listener if not running in a serverless environment (like Vercel)
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
