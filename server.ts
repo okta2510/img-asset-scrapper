@@ -52,6 +52,15 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: "5mb" }));
+app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+app.use((req: any, res, next) => {
+  if (typeof req.body === "string" && req.body.trim().startsWith("{")) {
+    try {
+      req.body = JSON.parse(req.body);
+    } catch (_) {}
+  }
+  next();
+});
 
 const isVercel = Boolean(process.env.VERCEL);
 const ROOT_DB_PATH = path.join(process.cwd(), "users-local-db.json");
@@ -122,123 +131,141 @@ function writeLocalDB(data: any) {
 async function postToAppsScript(url: string, payload: any) {
   console.log(`Forwarding payload to Apps Script:`, url);
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
     const text = await res.text();
     console.log(`Apps Script response snippet:`, text.substring(0, 300));
     try {
       return JSON.parse(text);
     } catch (_) {
-      return { success: false, error: "Apps Script returned non-JSON payload. Check deployment permissions. Response: " + text.substring(0, 150) };
+      return { 
+        success: false, 
+        error: "Google Apps Script returned non-JSON response. Please verify that the Apps Script is deployed as a Web App with access set to 'Anyone'. Details: " + text.substring(0, 150) 
+      };
     }
   } catch (err: any) {
     console.error(`Apps Script Connection Error:`, err);
-    return { success: false, error: "Connection to Google Apps Script failed: " + err.message };
+    return { success: false, error: "Connection to Google Apps Script failed: " + (err.message || String(err)) };
   }
 }
 
 // Auth API Endpoints
 app.post("/api/auth/register", async (req, res) => {
-  const { username, password, email, fullName, appScriptUrl } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ success: false, error: "Username and password are required" });
-  }
-
-  // A. IF Google Apps Script Web App URL is provided or configured in env, bridge directly to Google Sheets!
-  const targetScriptUrl = appScriptUrl || process.env.APP_SSCRIPT_URL;
-  if (targetScriptUrl && targetScriptUrl.trim().startsWith("http")) {
-    console.log(`Routing registration to Google Sheets: ${username}`);
-    const result = await postToAppsScript(targetScriptUrl.trim(), {
-      action: "register",
-      username,
-      password,
-      email,
-      fullName,
-      metadata: { source: "Assets Scrap" }
-    });
-    return res.json(result);
-  }
-
-  // B. Local Database Fallback (highly interactive simulator)
-  console.log(`Routing registration to local interactive DB: ${username}`);
-  const db = readLocalDB();
-  const exists = db.users.find((u: any) => u.username.toLowerCase() === username.toLowerCase());
-  
-  if (exists) {
-    return res.json({ success: false, error: "Username already exists" });
-  }
-
-  const newUser = {
-    username: username.trim(),
-    password: password.trim(),
-    email: email ? email.trim() : "",
-    fullName: fullName ? fullName.trim() : username.trim(),
-    status: "PENDING",
-    createdAt: new Date().toISOString()
-  };
-
-  db.users.push(newUser);
-  writeLocalDB(db);
-
-  return res.json({
-    success: true,
-    status: "PENDING",
-    user: {
-      username: newUser.username,
-      email: newUser.email,
-      fullName: newUser.fullName,
-      status: "PENDING",
-      createdAt: newUser.createdAt
+  try {
+    const body = (typeof req.body === "string" ? JSON.parse(req.body) : req.body) || {};
+    const { username, password, email, fullName, appScriptUrl } = body;
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: "Username and password are required" });
     }
-  });
+
+    const targetScriptUrl = appScriptUrl || process.env.APP_SSCRIPT_URL;
+    if (targetScriptUrl && targetScriptUrl.trim().startsWith("http")) {
+      console.log(`Routing registration to Google Sheets: ${username}`);
+      const result = await postToAppsScript(targetScriptUrl.trim(), {
+        action: "register",
+        username,
+        password,
+        email,
+        fullName,
+        metadata: { source: "Assets Scrap" }
+      });
+      return res.json(result);
+    }
+
+    console.log(`Routing registration to local interactive DB: ${username}`);
+    const db = readLocalDB();
+    const users = db.users || [];
+    const exists = users.find((u: any) => u.username && u.username.toLowerCase() === username.toLowerCase());
+    
+    if (exists) {
+      return res.json({ success: false, error: "Username already exists" });
+    }
+
+    const newUser = {
+      username: username.trim(),
+      password: password.trim(),
+      email: email ? email.trim() : "",
+      fullName: fullName ? fullName.trim() : username.trim(),
+      status: "PENDING",
+      createdAt: new Date().toISOString()
+    };
+
+    users.push(newUser);
+    db.users = users;
+    writeLocalDB(db);
+
+    return res.json({
+      success: true,
+      status: "PENDING",
+      user: {
+        username: newUser.username,
+        email: newUser.email,
+        fullName: newUser.fullName,
+        status: "PENDING",
+        createdAt: newUser.createdAt
+      }
+    });
+  } catch (error: any) {
+    console.error("Register API error:", error);
+    return res.status(500).json({ success: false, error: error.message || "An error occurred during registration" });
+  }
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const { username, password, appScriptUrl } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ success: false, error: "Username and password are required" });
-  }
-
-  // A. IF Google Apps Script Web App URL is provided or configured in env, bridge directly to Google Sheets!
-  const targetScriptUrl = appScriptUrl || process.env.APP_SSCRIPT_URL;
-  if (targetScriptUrl && targetScriptUrl.trim().startsWith("http")) {
-    console.log(`Routing login verification to Google Sheets: ${username}`);
-    const result = await postToAppsScript(targetScriptUrl.trim(), {
-      action: "login",
-      username,
-      password
-    });
-    return res.json(result);
-  }
-
-  // B. Local Database Fallback
-  console.log(`Routing login validation to local interactive DB: ${username}`);
-  const db = readLocalDB();
-  const user = db.users.find((u: any) => u.username.toLowerCase() === username.toLowerCase());
-
-  if (!user) {
-    return res.json({ success: false, error: "Username not registered" });
-  }
-
-  if (user.password !== password) {
-    return res.json({ success: false, error: "Incorrect password" });
-  }
-
-  return res.json({
-    success: true,
-    user: {
-      username: user.username,
-      email: user.email,
-      fullName: user.fullName,
-      status: user.status,
-      createdAt: user.createdAt
+  try {
+    const body = (typeof req.body === "string" ? JSON.parse(req.body) : req.body) || {};
+    const { username, password, appScriptUrl } = body;
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: "Username and password are required" });
     }
-  });
+
+    const targetScriptUrl = appScriptUrl || process.env.APP_SSCRIPT_URL;
+    if (targetScriptUrl && targetScriptUrl.trim().startsWith("http")) {
+      console.log(`Routing login verification to Google Sheets: ${username}`);
+      const result = await postToAppsScript(targetScriptUrl.trim(), {
+        action: "login",
+        username,
+        password
+      });
+      return res.json(result);
+    }
+
+    console.log(`Routing login validation to local interactive DB: ${username}`);
+    const db = readLocalDB();
+    const users = db.users || [];
+    const user = users.find((u: any) => u.username && u.username.toLowerCase() === username.toLowerCase());
+
+    if (!user) {
+      return res.json({ success: false, error: "Username not registered" });
+    }
+
+    if (user.password !== password) {
+      return res.json({ success: false, error: "Incorrect password" });
+    }
+
+    return res.json({
+      success: true,
+      user: {
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        status: user.status,
+        createdAt: user.createdAt
+      }
+    });
+  } catch (error: any) {
+    console.error("Login API error:", error);
+    return res.status(500).json({ success: false, error: error.message || "An error occurred during login" });
+  }
 });
 
 app.get("/api/config", (req, res) => {
