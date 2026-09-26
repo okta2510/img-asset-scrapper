@@ -59,7 +59,11 @@ export default function App() {
   });
 
   const [appScriptUrl, setAppScriptUrl] = useState(() => {
-    return localStorage.getItem("imgrap_app_script_url") || "";
+    const envUrl = 
+      (import.meta.env?.APP_SSCRIPT_URL as string) || 
+      (typeof process !== "undefined" && (process.env?.APP_SSCRIPT_URL as string)) || 
+      "";
+    return envUrl || localStorage.getItem("imgrap_app_script_url") || "";
   });
 
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
@@ -75,6 +79,20 @@ export default function App() {
   const [simulatedUsers, setSimulatedUsers] = useState<any[]>([]);
   const [showSimulatedControls, setShowSimulatedControls] = useState(false);
   const [showAppscriptGuide, setShowAppscriptGuide] = useState(false);
+
+  // Fetch app script URL from server config if not already set by env
+  useEffect(() => {
+    if (!appScriptUrl) {
+      fetch("/api/config")
+        .then((res) => res.json())
+        .then((data) => {
+          if (data?.appScriptUrl) {
+            setAppScriptUrl(data.appScriptUrl);
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     if (currentUser) {
@@ -855,90 +873,12 @@ function createResponse(obj) {
                     ) : (
                       <>
                         <Shield className="w-4 h-4" />
-                        {authMode === "login" ? "Verify Credentials & Enter" : "Register with PENDING status"}
+                        {authMode === "login" ? "Verify Credentials" : "Register with PENDING status"}
                       </>
                     )}
                   </button>
                 </div>
               </form>
-
-              {/* Collapsed Optional Apps Script Setting */}
-              <div className="border-t border-slate-100 pt-4 space-y-3">
-                <details className="group">
-                  <summary className="flex items-center justify-between text-xs font-bold text-slate-500 hover:text-indigo-600 cursor-pointer list-none select-none">
-                    <span className="flex items-center gap-1.5">
-                      <FileSpreadsheet className="w-4 h-4 text-slate-400 group-open:text-indigo-500" />
-                      Configure Live Google Spreadsheet
-                    </span>
-                    <ChevronRight className="w-4 h-4 text-slate-400 group-open:rotate-90 transition-transform" />
-                  </summary>
-                  
-                  <div className="mt-3 space-y-3 p-3.5 bg-slate-50 rounded-2xl border border-slate-100 text-xs">
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase tracking-wider font-bold text-slate-450 font-mono block">Target Spreadsheet ID</label>
-                      <a 
-                        href="https://docs.google.com/spreadsheets/d/1aFaGZ6KicIAZ07wihcLTmoMI4YnlyMxRo1l9vzVFRus/edit?usp=sharing" 
-                        target="_blank" 
-                        rel="noreferrer" 
-                        className="font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1.5 break-all underline"
-                      >
-                        1aFaGZ6KicIAZ07wihcLTmoMI4YnlyMxRo1l9vzVFRus
-                        <ExternalLink className="w-3 h-3 shrink-0" />
-                      </a>
-                    </div>
-                    
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase tracking-wider font-bold text-slate-450 font-mono block">Google Apps Script Web App URL</label>
-                      <input
-                        type="text"
-                        placeholder="Paste Deployed URL (script.google.com/macros/...)"
-                        value={appScriptUrl}
-                        onChange={(e) => setAppScriptUrl(e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 placeholder:text-slate-405 focus:outline-none focus:border-indigo-500 font-mono"
-                      />
-                      <p className="text-[10px] text-slate-450 leading-relaxed font-semibold">
-                        Leave blank to run on the <strong className="text-indigo-500">Local DB simulator</strong>. Pasting your web app link connects both database registration and login actions to Google Sheets.
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setShowAppscriptGuide(!showAppscriptGuide)}
-                      className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1"
-                    >
-                      <HelpCircle className="w-3.5 h-3.5" />
-                      View Apps Script Setup Tutorial
-                    </button>
-
-                    {showAppscriptGuide && (
-                      <div className="space-y-2 mt-2 pt-2 border-t border-slate-200">
-                        <p className="text-[10.5px] text-slate-500 leading-normal">
-                          How to configure: Click Extension &rarr; Apps Script inside your Google Spreadsheet, throw the code snippet below inside `Code.gs`, Deploy as Web App, and set who has access to `Anyone`. Use the copied link here.
-                        </p>
-                        <div className="relative">
-                          <textarea
-                            readOnly
-                            value={appsScriptCode}
-                            rows={8}
-                            className="w-full bg-slate-900 text-slate-200 font-mono text-[9px] p-2.5 rounded-xl border border-slate-805 resize-none"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              navigator.clipboard.writeText(appsScriptCode);
-                              alert("Apps Script template copied!");
-                            }}
-                            className="absolute right-2.5 top-2.5 p-1 bg-slate-800 hover:bg-slate-700 text-white rounded shadow"
-                            title="Copy Code"
-                          >
-                            <Copy className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </details>
-              </div>
             </div>
           ) : (
             /* Awaiting approval pending screen */
@@ -998,6 +938,7 @@ function createResponse(obj) {
                           alert("Congratulations! Your account is now APPROVED. Loading Scraper...");
                         } else {
                           alert("Your registration is still PENDING confirmation. Try approving it in the simulation admin dashboard below!");
+                          alert("Your registration is still PENDING confirmation. Please approve this account in Google Sheets to continue.");
                         }
                       } else {
                         // Re-query local simulated db status
@@ -1036,82 +977,6 @@ function createResponse(obj) {
               </div>
             </div>
           )}
-
-          {/* Interactive Simulation Console */}
-          <div className="bg-slate-100/80 border border-slate-250 backdrop-blur-xs rounded-2xl p-4 space-y-3 shadow-xs">
-            <div className="flex justify-between items-center">
-              <span className="text-[10.5px] font-bold text-slate-500 uppercase tracking-wider font-mono flex items-center gap-1">
-                <Shield className="w-3.5 h-3.5 text-indigo-500" />
-                Google Sheets Simulation Control
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSimulatedControls(!showSimulatedControls);
-                  fetchSimulatedUsers();
-                }}
-                className="px-2 py-0.5 text-[10px] bg-white border border-slate-200 text-slate-600 font-bold hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all"
-              >
-                {showSimulatedControls ? "Collapse DB" : "Inspect Sheet DB"}
-              </button>
-            </div>
-
-            <p className="text-[10.5px] text-slate-500 leading-normal font-medium">
-              Every registered user is saved to <strong>users-local-db.json</strong> which models the sheet. Use the tools below to set simulated user statuses on the fly!
-            </p>
-
-            {showSimulatedControls && (
-              <div className="space-y-1.5 pt-1 border-t border-slate-200">
-                <span className="text-[9px] uppercase font-bold text-slate-400 font-mono block">Simulated Spreadsheet rows (users)</span>
-                <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
-                  {simulatedUsers.length === 0 ? (
-                    <p className="text-[10px] text-slate-400 font-mono py-1">No registered users in db yet.</p>
-                  ) : (
-                    simulatedUsers.map((u: any) => (
-                      <div key={u.username} className="flex items-center justify-between p-2 rounded-xl border border-slate-200 bg-white gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-xs text-slate-750 truncate block">{u.username}</span>
-                            <span className="text-[9px] font-mono opacity-60">({u.fullName || "demo"})</span>
-                          </div>
-                          <span className={`text-[10px] font-bold font-mono px-1.5 py-0.2 rounded-md ${
-                            u.status === "APPROVED" 
-                              ? "bg-emerald-50 text-emerald-600" 
-                              : u.status === "REJECTED" 
-                              ? "bg-red-50 text-red-600" 
-                              : "bg-amber-50 text-amber-600"
-                          }`}>
-                            {u.status}
-                          </span>
-                        </div>
-                        
-                        <div className="flex gap-1 shrink-0">
-                          {u.status !== "APPROVED" && (
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateSimulatedStatus(u.username, "APPROVED")}
-                              className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[9.5px] font-bold transition-all shadow-3xs"
-                            >
-                              Approve
-                            </button>
-                          )}
-                          {u.status !== "PENDING" && (
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateSimulatedStatus(u.username, "PENDING")}
-                              className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[9.5px] font-bold transition-all shadow-3xs"
-                            >
-                              Set Pending
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       </div>
     );

@@ -109,10 +109,11 @@ app.post("/api/auth/register", async (req, res) => {
     return res.status(400).json({ success: false, error: "Username and password are required" });
   }
 
-  // A. IF Google Apps Script Web App URL is provided, bridge directly to Google Sheets!
-  if (appScriptUrl && appScriptUrl.trim().startsWith("http")) {
+  // A. IF Google Apps Script Web App URL is provided or configured in env, bridge directly to Google Sheets!
+  const targetScriptUrl = appScriptUrl || process.env.APP_SSCRIPT_URL;
+  if (targetScriptUrl && targetScriptUrl.trim().startsWith("http")) {
     console.log(`Routing registration to Google Sheets: ${username}`);
-    const result = await postToAppsScript(appScriptUrl, {
+    const result = await postToAppsScript(targetScriptUrl.trim(), {
       action: "register",
       username,
       password,
@@ -163,10 +164,11 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(400).json({ success: false, error: "Username and password are required" });
   }
 
-  // A. IF Google Apps Script Web App URL is provided, bridge directly to Google Sheets!
-  if (appScriptUrl && appScriptUrl.trim().startsWith("http")) {
+  // A. IF Google Apps Script Web App URL is provided or configured in env, bridge directly to Google Sheets!
+  const targetScriptUrl = appScriptUrl || process.env.APP_SSCRIPT_URL;
+  if (targetScriptUrl && targetScriptUrl.trim().startsWith("http")) {
     console.log(`Routing login verification to Google Sheets: ${username}`);
-    const result = await postToAppsScript(appScriptUrl, {
+    const result = await postToAppsScript(targetScriptUrl.trim(), {
       action: "login",
       username,
       password
@@ -196,6 +198,13 @@ app.post("/api/auth/login", async (req, res) => {
       status: user.status,
       createdAt: user.createdAt
     }
+  });
+});
+
+app.get("/api/config", (req, res) => {
+  res.json({
+    success: true,
+    appScriptUrl: process.env.APP_SSCRIPT_URL || ""
   });
 });
 
