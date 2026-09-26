@@ -36,6 +36,15 @@ app.use((req, res, next) => {
   next();
 });
 
+// Fix Vercel rewrite URL stripping & restore original URL
+app.use((req: any, res, next) => {
+  const matchedPath = req.headers["x-matched-path"] || req.headers["x-vercel-matched-path"] || req.headers["x-forwarded-uri"];
+  if (matchedPath && typeof matchedPath === "string" && matchedPath.startsWith("/api")) {
+    req.url = matchedPath;
+  }
+  next();
+});
+
 // Normalize request path so that both /api/foo and /foo match when routed via Vercel or locally
 app.use((req, res, next) => {
   if (!req.url.startsWith("/api")) {
@@ -1110,6 +1119,11 @@ app.post("/api/gemini/analyze", async (req, res) => {
     console.error("Gemini AI API Error:", error);
     res.status(500).json({ error: error.message || "An AI analyze request error occurred" });
   }
+});
+
+// Fallback for unmatched API endpoints so Vercel serverless functions return 404 JSON immediately
+app.use("/api", (req, res) => {
+  res.status(404).json({ success: false, error: `API endpoint ${req.originalUrl || req.url} not found` });
 });
 
 // Integrate Vite Middleware for Client Application Access
