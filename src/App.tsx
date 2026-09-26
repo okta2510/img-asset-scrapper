@@ -805,10 +805,10 @@ function createResponse(obj) {
               Y
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              Assets Scrap Secure Gate
+              Assets Scrap by Yanginibeda.com
             </h1>
             <p className="text-xs text-slate-500 font-medium">
-              Google Sheets & Apps Script Authenticated Scraper Portal
+              Grabe Assets instantly from any public website or search engine.
             </p>
           </div>
 
@@ -932,7 +932,7 @@ function createResponse(obj) {
                     ) : (
                       <>
                         <Shield className="w-4 h-4" />
-                        {authMode === "login" ? "Verify Credentials" : "Register with PENDING status"}
+                        {authMode === "login" ? "Verify Credentials" : "Register Account"}
                       </>
                     )}
                   </button>
