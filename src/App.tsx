@@ -2,13 +2,14 @@ import React, { useState, useEffect } from "react";
 import { 
   Globe, Search, SlidersHorizontal, Image as ImageIcon, Download, 
   Trash2, Loader2, Sparkles, Filter, CheckSquare, Square, RefreshCcw, 
-  Settings, ArrowUpDown, ChevronRight, HelpCircle, HardDrive, Crop, Eye, Sparkle,
-  Copy, Check, Plus, Lock, User, Mail, ShieldAlert, Key, LogOut, ExternalLink, FileSpreadsheet, UserCheck, Shield
+  Settings, ArrowUpDown, ChevronLeft, ChevronRight, HelpCircle, HardDrive, Crop, Eye, Sparkle,
+  Copy, Check, Plus, Lock, User, Mail, ShieldAlert, Key, LogOut, ExternalLink, FileSpreadsheet, UserCheck, Shield,
+  Link, ClipboardCopy
 } from "lucide-react";
 import JSZip from "jszip";
 
 import { ScrapedImage, ScrapeHistoryItem, CustomEngine } from "./types";
-import { getProxiedUrl, triggerFileDownload, extractFormatFromUrl } from "./utils/imageEditor";
+import { getProxiedUrl, triggerFileDownload, extractFormatFromUrl, copyImageToClipboard } from "./utils/imageEditor";
 import HistoryPanel from "./components/HistoryPanel";
 import GeminiAnalyzeModal from "./components/GeminiAnalyzeModal";
 import ImageCropperModal from "./components/ImageCropperModal";
@@ -328,12 +329,16 @@ function createResponse(obj) {
   const [history, setHistory] = useState<ScrapeHistoryItem[]>([]);
   
   // Filters state
-  const [minDimension, setMinDimension] = useState<"all" | "large" | "medium" | "small">("all");
-  const [selectedFormat, setSelectedFormat] = useState<"all" | "jpeg" | "png" | "webp" | "svg">("all");
+  const [minDimension, setMinDimension] = useState<"all" | "xs" | "sm" | "md" | "lg" | "xl" | "xxl">("all");
+  const [selectedFormat, setSelectedFormat] = useState<"all" | "jpeg" | "png" | "webp" | "svg" | "ico" | "gif" | "other">("all");
   const [gallerySearch, setGallerySearch] = useState("");
   const [sortBy, setSortBy] = useState<"none" | "dimension" | "name">("none");
   const [aspectRatioFilter, setAspectRatioFilter] = useState<"all" | "landscape" | "portrait" | "square">("all");
   const [targetRegion, setTargetRegion] = useState<"all" | "US" | "ID" | "JP" | "GB" | "FR">("all");
+
+  // Items per page / display count limit (50 / 100 / 200 / 500 / all)
+  const [itemsPerPage, setItemsPerPage] = useState<number | "all">(50);
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Selection states (for bulk download)
   const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
@@ -344,6 +349,8 @@ function createResponse(obj) {
   const [cropperTarget, setCropperTarget] = useState<ScrapedImage | null>(null);
   const [aiTarget, setAiTarget] = useState<ScrapedImage | null>(null);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [copiedImageId, setCopiedImageId] = useState<string | null>(null);
+  const [copyingImageId, setCopyingImageId] = useState<string | null>(null);
 
   const handleCopyLink = (url: string) => {
     navigator.clipboard.writeText(url).then(() => {
@@ -354,6 +361,22 @@ function createResponse(obj) {
     }).catch((err) => {
       console.error("Failed to copy image link:", err);
     });
+  };
+
+  const handleCopyImage = async (imageUrl: string) => {
+    try {
+      setCopyingImageId(imageUrl);
+      await copyImageToClipboard(imageUrl);
+      setCopiedImageId(imageUrl);
+      setTimeout(() => {
+        setCopiedImageId(null);
+      }, 2000);
+    } catch (err: any) {
+      console.error("Failed to copy image to clipboard:", err);
+      alert(`Could not copy image to clipboard: ${err.message || "Security or format limitation"}`);
+    } finally {
+      setCopyingImageId(null);
+    }
   };
 
   const handleAddCustomEngine = () => {
@@ -680,12 +703,15 @@ function createResponse(obj) {
 
   // Client Filter logic
   const filteredImages = images.filter((img) => {
-    // Sizing/Dimension limits
+    // Sizing/Dimension limits (xs, sm, md, lg, xl, xxl, all)
     if (minDimension !== "all" && img.width && img.height) {
       const sizeRating = Math.max(img.width, img.height);
-      if (minDimension === "large" && sizeRating < 1600) return false;
-      if (minDimension === "medium" && (sizeRating < 800 || sizeRating >= 1600)) return false;
-      if (minDimension === "small" && sizeRating >= 800) return false;
+      if (minDimension === "xs" && sizeRating >= 300) return false;
+      if (minDimension === "sm" && (sizeRating < 300 || sizeRating >= 600)) return false;
+      if (minDimension === "md" && (sizeRating < 600 || sizeRating >= 900)) return false;
+      if (minDimension === "lg" && (sizeRating < 900 || sizeRating >= 1200)) return false;
+      if (minDimension === "xl" && (sizeRating < 1200 || sizeRating >= 1920)) return false;
+      if (minDimension === "xxl" && sizeRating < 1920) return false;
     }
 
     // Aspect Ratio filter
@@ -696,9 +722,29 @@ function createResponse(obj) {
       if (aspectRatioFilter === "square" && (ratio < 0.9 || ratio > 1.1)) return false;
     }
 
-    // Format
-    if (selectedFormat !== "all" && img.format) {
-      if (img.format.toLowerCase() !== selectedFormat.toLowerCase()) return false;
+    // Format / Document Signature
+    if (selectedFormat !== "all") {
+      const fmt = (img.format || extractFormatFromUrl(img.url)).toLowerCase();
+      if (selectedFormat === "jpeg") {
+        if (fmt !== "jpeg" && fmt !== "jpg") return false;
+      } else if (selectedFormat === "png") {
+        if (fmt !== "png") return false;
+      } else if (selectedFormat === "webp") {
+        if (fmt !== "webp") return false;
+      } else if (selectedFormat === "svg") {
+        if (fmt !== "svg") return false;
+      } else if (selectedFormat === "ico") {
+        const isIco = fmt === "ico" || img.url.toLowerCase().includes(".ico") || img.url.toLowerCase().includes("favicon");
+        if (!isIco) return false;
+      } else if (selectedFormat === "gif") {
+        if (fmt !== "gif" && !img.url.toLowerCase().includes(".gif")) return false;
+      } else if (selectedFormat === "other") {
+        const standard = new Set(["jpeg", "jpg", "png", "webp", "svg", "ico"]);
+        const isIco = fmt === "ico" || img.url.toLowerCase().includes(".ico") || img.url.toLowerCase().includes("favicon");
+        if (standard.has(fmt) || isIco) return false;
+      } else {
+        if (fmt !== selectedFormat.toLowerCase()) return false;
+      }
     }
 
     // Keyword search in title/alt
@@ -724,6 +770,19 @@ function createResponse(obj) {
     return 0;
   });
 
+  // Pagination & items showing calculation (50 / 100 / 200 / 500 / all)
+  const totalItems = sortedImages.length;
+  const totalPages = itemsPerPage === "all" ? 1 : Math.max(1, Math.ceil(totalItems / (typeof itemsPerPage === "number" ? itemsPerPage : 50)));
+  const effectivePage = Math.min(Math.max(1, currentPage), totalPages);
+  const pageSize = typeof itemsPerPage === "number" ? itemsPerPage : totalItems;
+  const startIndex = itemsPerPage === "all" ? 0 : (effectivePage - 1) * pageSize;
+  const endIndex = itemsPerPage === "all" ? totalItems : Math.min(startIndex + pageSize, totalItems);
+  const displayedImages = itemsPerPage === "all" ? sortedImages : sortedImages.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [minDimension, selectedFormat, aspectRatioFilter, targetRegion, gallerySearch, sortBy, itemsPerPage]);
+
   // Preset query tests to let users play with the app instantly
   const testPreQueries = {
     wikipedia: "en.wikipedia.org/wiki/Portal:Arts",
@@ -746,7 +805,7 @@ function createResponse(obj) {
               Y
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              yanginibeda-imgrap Secure Gate
+              Assets Scrap Secure Gate
             </h1>
             <p className="text-xs text-slate-500 font-medium">
               Google Sheets & Apps Script Authenticated Scraper Portal
@@ -995,7 +1054,7 @@ function createResponse(obj) {
             Y
           </div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">
-            yanginibeda-imgrap <span className="text-indigo-600 font-sans font-semibold text-xs ml-2 py-0.5 px-1.5 rounded-md bg-indigo-50 border border-indigo-100 font-mono">v2.5</span>
+            Assets Scrap <span className="text-indigo-600 font-sans font-semibold text-xs ml-2 py-0.5 px-1.5 rounded-md bg-indigo-50 border border-indigo-100 font-mono">v2.5</span>
           </h1>
         </div>
 
@@ -1433,13 +1492,36 @@ function createResponse(obj) {
 
               {/* Filters Panel */}
               <div className="bg-white border border-slate-200 p-6 rounded-3xl shadow-xs space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex flex-wrap items-center justify-between border-b border-slate-100 pb-3 gap-2">
                   <div className="flex items-center gap-2">
                     <Filter className="w-4 h-4 text-indigo-600" />
                     <h3 className="font-display font-semibold text-sm text-slate-900">Direct Sorting & Filters</h3>
                   </div>
-                  <div className="text-slate-500 text-xs font-mono">
-                    Showing {sortedImages.length} of {images.length}
+
+                  <div className="flex items-center gap-3">
+                    {/* Showing items per view selector */}
+                    <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                      <span className="text-[10px] uppercase font-mono tracking-wider text-slate-400 font-bold">Show:</span>
+                      <select
+                        value={itemsPerPage}
+                        onChange={(e) => {
+                          const val = e.target.value === "all" ? "all" : Number(e.target.value);
+                          setItemsPerPage(val);
+                          setCurrentPage(1);
+                        }}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 outline-none focus:border-indigo-500 font-mono font-bold cursor-pointer hover:bg-slate-100 transition-all"
+                      >
+                        <option value={50}>50 items</option>
+                        <option value={100}>100 items</option>
+                        <option value={200}>200 items</option>
+                        <option value={500}>500 items</option>
+                        <option value="all">All ({totalItems})</option>
+                      </select>
+                    </div>
+
+                    <div className="text-slate-500 text-xs font-mono font-medium">
+                      Showing {totalItems === 0 ? 0 : startIndex + 1}–{endIndex} of {totalItems}
+                    </div>
                   </div>
                 </div>
 
@@ -1453,10 +1535,13 @@ function createResponse(obj) {
                       onChange={(e) => setMinDimension(e.target.value as any)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-700 outline-none focus:border-indigo-500 font-medium"
                     >
-                      <option value="all">⚠️ Show All Sizes</option>
-                      <option value="large">🌌 HD & Larger (&gt;1600px)</option>
-                      <option value="medium">📸 Medium (800px-1600px)</option>
-                      <option value="small">📱 Web Assets (&lt;800px)</option>
+                      <option value="all">🌍 All Sizes (Show All)</option>
+                      <option value="xs">📱 XS (&lt;300px)</option>
+                      <option value="sm">📐 SM (300px - 600px)</option>
+                      <option value="md">📸 MD (600px - 900px)</option>
+                      <option value="lg">🖼️ LG (900px - 1200px)</option>
+                      <option value="xl">🖥️ XL (1200px - 1920px)</option>
+                      <option value="xxl">🌌 XXL (&gt;1920px)</option>
                     </select>
                   </div>
 
@@ -1472,7 +1557,10 @@ function createResponse(obj) {
                       <option value="jpeg">JPEG / JPG</option>
                       <option value="png">PNG (Transparency)</option>
                       <option value="webp">WebP (Compressed)</option>
-                      <option value="svg">SVG / GIF Vectors</option>
+                      <option value="svg">SVG Vector</option>
+                      <option value="ico">🔖 ICO (Favicon / Icon)</option>
+                      <option value="gif">🎞️ GIF (Animated)</option>
+                      <option value="other">📦 Other Image (AVIF, BMP, TIFF, etc.)</option>
                     </select>
                   </div>
 
@@ -1553,34 +1641,57 @@ function createResponse(obj) {
 
                 {/* Batch selection quick tools */}
                 <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs w-full">
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
-                      onClick={() => handleSelectAll(sortedImages)}
-                      className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-bold transition-all flex items-center gap-1.5 text-[11px]"
+                      type="button"
+                      onClick={() => handleSelectAll(displayedImages)}
+                      className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-bold transition-all flex items-center gap-1.5 text-[11px] cursor-pointer"
                     >
-                      {sortedImages.every(img => selectedUrls.has(img.url)) ? (
+                      {displayedImages.every(img => selectedUrls.has(img.url)) ? (
                         <>
                           <CheckSquare className="w-3.5 h-3.5 text-indigo-600" />
-                          Unselect All Filtered
+                          Unselect Page ({displayedImages.length})
                         </>
                       ) : (
                         <>
                           <Square className="w-3.5 h-3.5 text-slate-450" />
-                          Select All Filtered
+                          Select Page ({displayedImages.length})
                         </>
                       )}
                     </button>
+
+                    {totalItems > displayedImages.length && (
+                      <button
+                        type="button"
+                        onClick={() => handleSelectAll(sortedImages)}
+                        className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-indigo-600 font-bold transition-all flex items-center gap-1.5 text-[11px] cursor-pointer"
+                      >
+                        {sortedImages.every(img => selectedUrls.has(img.url)) ? (
+                          <>
+                            <CheckSquare className="w-3.5 h-3.5 text-indigo-600" />
+                            Unselect All ({totalItems})
+                          </>
+                        ) : (
+                          <>
+                            <Square className="w-3.5 h-3.5 text-slate-450" />
+                            Select All ({totalItems})
+                          </>
+                        )}
+                      </button>
+                    )}
+
                     <button
+                      type="button"
                       onClick={() => setSelectedUrls(new Set())}
                       disabled={selectedUrls.size === 0}
-                      className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 disabled:opacity-40 border border-slate-200 rounded-lg text-rose-600 font-bold transition-all flex items-center gap-1 text-[11px]"
+                      className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 disabled:opacity-40 border border-slate-200 rounded-lg text-rose-600 font-bold transition-all flex items-center gap-1 text-[11px] cursor-pointer"
                     >
                       Clear Selection
                     </button>
                   </div>
 
                   <div className="text-slate-400 font-mono text-[11px] font-bold">
-                    Tip: Hover image to access **Crop / Resize** panel and **Gemini AI Insights** scan.
+                    Tip: Hover image to **Copy Image** to clipboard, **Copy URL Link**, **Crop / Resize**, or scan with **Gemini AI**.
                   </div>
                 </div>
 
@@ -1588,11 +1699,11 @@ function createResponse(obj) {
 
               {/* Dynamic Responsive Grid Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-                {sortedImages.map((image, index) => {
+                {displayedImages.map((image, index) => {
                   const isChecked = selectedUrls.has(image.url);
                   return (
                     <div
-                      key={image.url + index}
+                      key={image.url + (startIndex + index)}
                       className={`group relative bg-white border rounded-2xl overflow-hidden transition-all duration-300 flex flex-col justify-between ${
                         isChecked 
                           ? "border-indigo-600 shadow-md shadow-indigo-600/5 ring-1 ring-indigo-600/30 bg-indigo-50/10" 
@@ -1601,13 +1712,17 @@ function createResponse(obj) {
                     >
                       {/* Checkbox overlay button */}
                       <button
-                        onClick={() => handleToggleSelect(image.url)}
-                        className={`z-10 absolute top-3 left-3 z-10 p-1.5 rounded-xl transition-all border ${
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleSelect(image.url);
+                        }}
+                        className={`absolute top-3 left-3 z-30 p-1.5 rounded-xl transition-all border cursor-pointer ${
                           isChecked
-                            ? "bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/20"
-                            : "bg-white/95 border-slate-200 text-slate-500 opacity-0 group-hover:opacity-100 shadow-xs hover:bg-slate-50"
+                            ? "bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/30 opacity-100 scale-100"
+                            : "bg-white/95 border-slate-200 text-slate-500 opacity-90 group-hover:opacity-100 shadow-xs hover:bg-white hover:text-indigo-600 hover:border-indigo-400 hover:scale-105 active:scale-95"
                         }`}
-                        title={isChecked ? "Deselect from bundle" : "Select for bulk pack"}
+                        title={isChecked ? "Deselect from bundle" : "Select for bulk pack (download later)"}
                       >
                         {isChecked ? (
                           <CheckSquare className="w-4 h-4" />
@@ -1618,57 +1733,10 @@ function createResponse(obj) {
 
                       {/* Dimensions layout tags top right */}
                       {image.width && image.height && (
-                        <div className="absolute top-3 right-3 z-10 bg-white/90 backdrop-blur-md px-2.5 py-1 text-[10px] font-mono font-bold rounded-lg text-indigo-600 border border-slate-200 shadow-xs">
+                        <div className="absolute top-3 right-3 z-20 bg-white/90 backdrop-blur-md px-2.5 py-1 text-[10px] font-mono font-bold rounded-lg text-indigo-600 border border-slate-200 shadow-xs">
                           {image.width} × {image.height} px
                         </div>
                       )}
-
-                      {/* Hover action overlay buttons */}
-                      <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-2xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2.5 z-10">
-                        {/* Crop / Resizer action */}
-                        <button
-                          onClick={() => setCropperTarget(image)}
-                          className="p-3 bg-white hover:bg-indigo-50 text-indigo-600 rounded-2xl transition-all transform scale-90 group-hover:scale-100 shadow-lg border border-slate-200"
-                          title="Interactive viewports crop & optimize"
-                        >
-                          <Crop className="w-4 h-4" />
-                        </button>
-                        
-                        {/* Gemini analyze action */}
-                        <button
-                          onClick={() => setAiTarget(image)}
-                          className="p-3 bg-white hover:bg-amber-50 text-amber-600 rounded-2xl transition-all transform scale-90 group-hover:scale-100 shadow-lg border border-slate-200"
-                          title="Scan elements with Gemini AI Insights"
-                        >
-                          <Sparkles className="w-4 h-4" />
-                        </button>
-
-                        {/* Copy Link Direct */}
-                        <button
-                          onClick={() => handleCopyLink(image.url)}
-                          className={`p-3 rounded-2xl transition-all transform scale-90 group-hover:scale-100 shadow-lg border border-slate-200 ${
-                            copiedUrl === image.url
-                              ? "bg-emerald-600 text-white border-emerald-500"
-                              : "bg-white hover:bg-slate-50 text-slate-600"
-                          }`}
-                          title="Copy original image URL to clipboard"
-                        >
-                          {copiedUrl === image.url ? (
-                            <Check className="w-4 h-4" />
-                          ) : (
-                            <Copy className="w-4 h-4" />
-                          )}
-                        </button>
-
-                        {/* Direct Save */}
-                        <button
-                          onClick={() => handleSingleSave(image)}
-                          className="p-3 bg-white hover:bg-emerald-50 text-emerald-600 rounded-2xl transition-all transform scale-90 group-hover:scale-100 border border-slate-200 shadow-lg"
-                          title="Save original raw file to device"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                      </div>
 
                       {/* Image Frame Holder */}
                       <div className="bg-slate-50 aspect-video flex items-center justify-center overflow-hidden border-b border-slate-200 relative">
@@ -1679,6 +1747,103 @@ function createResponse(obj) {
                           loading="lazy"
                           crossOrigin="anonymous"
                         />
+
+                        {/* Hover action overlay buttons - scoped to image frame with lower z-index than checkbox */}
+                        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-2xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 z-10 pointer-events-none group-hover:pointer-events-auto">
+                          {/* Crop / Resizer action */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCropperTarget(image);
+                            }}
+                            className="p-2.5 bg-white hover:bg-indigo-50 text-indigo-600 rounded-2xl transition-all transform scale-90 group-hover:scale-100 shadow-lg border border-slate-200 cursor-pointer"
+                            title="Interactive viewports crop & optimize"
+                          >
+                            <Crop className="w-4 h-4" />
+                          </button>
+                          
+                          {/* Gemini analyze action */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAiTarget(image);
+                            }}
+                            className="p-2.5 bg-white hover:bg-amber-50 text-amber-600 rounded-2xl transition-all transform scale-90 group-hover:scale-100 shadow-lg border border-slate-200 cursor-pointer"
+                            title="Scan elements with Gemini AI Insights"
+                          >
+                            <Sparkles className="w-4 h-4" />
+                          </button>
+
+                          {/* Copy Image to Clipboard (for pasting into other apps/pages) */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopyImage(image.url);
+                            }}
+                            disabled={copyingImageId === image.url}
+                            className={`p-2 sm:p-2.5 rounded-2xl transition-all transform scale-90 group-hover:scale-100 shadow-lg border border-slate-200 cursor-pointer ${
+                              copiedImageId === image.url
+                                ? "bg-indigo-600 text-white border-indigo-500 scale-100 shadow-indigo-600/30"
+                                : copyingImageId === image.url
+                                ? "bg-indigo-50 text-indigo-500 border-indigo-200"
+                                : "bg-white hover:bg-indigo-50 text-indigo-600"
+                            }`}
+                            title={
+                              copiedImageId === image.url
+                                ? "Image copied to clipboard! Paste directly with Ctrl+V / Cmd+V"
+                                : "Copy Image to Clipboard (Paste into Canva, Figma, WhatsApp, Docs, etc.)"
+                            }
+                          >
+                            {copyingImageId === image.url ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                            ) : copiedImageId === image.url ? (
+                              <Check className="w-4 h-4" />
+                            ) : (
+                              <ClipboardCopy className="w-4 h-4" />
+                            )}
+                          </button>
+
+                          {/* Copy Link Direct (URL text) */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopyLink(image.url);
+                            }}
+                            className={`p-2 sm:p-2.5 rounded-2xl transition-all transform scale-90 group-hover:scale-100 shadow-lg border border-slate-200 cursor-pointer ${
+                              copiedUrl === image.url
+                                ? "bg-emerald-600 text-white border-emerald-500 scale-100 shadow-emerald-600/30"
+                                : "bg-white hover:bg-slate-50 text-slate-600"
+                            }`}
+                            title={
+                              copiedUrl === image.url
+                                ? "Image URL link copied to clipboard!"
+                                : "Copy Image URL Link"
+                            }
+                          >
+                            {copiedUrl === image.url ? (
+                              <Check className="w-4 h-4" />
+                            ) : (
+                              <Link className="w-4 h-4" />
+                            )}
+                          </button>
+
+                          {/* Direct Save */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSingleSave(image);
+                            }}
+                            className="p-2.5 bg-white hover:bg-emerald-50 text-emerald-600 rounded-2xl transition-all transform scale-90 group-hover:scale-100 border border-slate-200 shadow-lg cursor-pointer"
+                            title="Save original raw file to device"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Bottom Context Metadata info */}
@@ -1715,6 +1880,69 @@ function createResponse(obj) {
                 })}
               </div>
 
+              {/* Pagination controls when items exceed limit */}
+              {totalPages > 1 && (
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                  <div className="text-xs text-slate-500 font-mono">
+                    Showing <strong className="text-slate-800">{startIndex + 1}</strong>–<strong className="text-slate-800">{endIndex}</strong> of <strong className="text-slate-800">{totalItems}</strong> images (Page {effectivePage} of {totalPages})
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCurrentPage(prev => Math.max(1, prev - 1));
+                        window.scrollTo({ top: 400, behavior: "smooth" });
+                      }}
+                      disabled={effectivePage <= 1}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" /> Previous
+                    </button>
+
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter(p => p === 1 || p === totalPages || Math.abs(p - effectivePage) <= 2)
+                        .map((p, idx, arr) => {
+                          const prev = arr[idx - 1];
+                          return (
+                            <React.Fragment key={p}>
+                              {prev && p - prev > 1 && (
+                                <span className="px-1 text-slate-400 font-mono text-xs">...</span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCurrentPage(p);
+                                  window.scrollTo({ top: 400, behavior: "smooth" });
+                                }}
+                                className={`w-8 h-8 rounded-xl text-xs font-bold font-mono transition-all cursor-pointer ${
+                                  effectivePage === p
+                                    ? "bg-indigo-600 text-white shadow-xs"
+                                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                                }`}
+                              >
+                                {p}
+                              </button>
+                            </React.Fragment>
+                          );
+                        })}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCurrentPage(prev => Math.min(totalPages, prev + 1));
+                        window.scrollTo({ top: 400, behavior: "smooth" });
+                      }}
+                      disabled={effectivePage >= totalPages}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none transition-all flex items-center gap-1 cursor-pointer"
+                    >
+                      Next <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
@@ -1738,7 +1966,7 @@ function createResponse(obj) {
       )}
 
       <footer className="mt-auto border-t border-slate-205 bg-white py-6 text-center text-xs text-slate-400 font-mono">
-        <p>© 2026 yanginibeda-imgrap • Robust CORS Bypass Proxy • Balanced Geometry Interface Design.</p>
+        <p>© 2026 Assets Scrap • Robust CORS Bypass Proxy • Balanced Geometry Interface Design.</p>
       </footer>
 
     </div>

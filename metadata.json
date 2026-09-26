@@ -1,6 +1,6 @@
 {
-  "name": "yanginibeda-imgrap",
-  "description": "yanginibeda-imgrap (Image Scrap) - A powerful image extraction, viewport customization, and intelligence analysis engine to crawl, filter, analyze, crop, and download images.",
+  "name": "Assets Scrap App",
+  "description": "Assets Scrap App (Image Scrap) - A powerful image extraction, viewport customization, and intelligence analysis engine to crawl, filter, analyze, crop, and download images.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

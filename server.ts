@@ -119,7 +119,7 @@ app.post("/api/auth/register", async (req, res) => {
       password,
       email,
       fullName,
-      metadata: { source: "yanginibeda-imgrap" }
+      metadata: { source: "Assets Scrap" }
     });
     return res.json(result);
   }
@@ -450,11 +450,19 @@ app.get("/api/scrape", async (req, res) => {
           }
         });
 
+        // Extract favicon and site icon links
+        $('link[rel*="icon"]').each((_, element) => {
+          const href = $(element).attr("href");
+          if (href) {
+            addImage(href, "Favicon / Site Icon");
+          }
+        });
+
         // Extract links carrying direct image pathways
         $("a").each((_, element) => {
           const href = $(element).attr("href");
           const text = $(element).text() || "";
-          if (href && /\.(jpe?g|png|webp|gif|svg)(\?.*)?$/i.test(href)) {
+          if (href && /\.(jpe?g|png|webp|gif|svg|ico|avif|bmp|tiff?)(\?.*)?$/i.test(href)) {
             addImage(href, text);
           }
         });

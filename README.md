@@ -1,6 +1,6 @@
-# yanginibeda-imgrap - Complete Technical Reference Manual
+# Assets Scrap App - Complete Technical Reference Manual
 
-`yanginibeda-imgrap` is a full-stack image extraction, viewport customization, and intelligence analysis machine. It enables users to simultaneously crawl multiple custom websites or query global photography archives across federated engines (Google, Bing, Unsplash), analyze images using Gemini API Insights, dynamically crop/recompress visual assets, and package deliverables in a unified batch zip container.
+`Assets Scrap App` is a full-stack image extraction, viewport customization, and intelligence analysis machine. It enables users to simultaneously crawl multiple custom websites or query global photography archives across federated engines (Google, Bing, Unsplash), analyze images using Gemini API Insights, dynamically crop/recompress visual assets, and package deliverables in a unified batch zip container.
 
 ---
 

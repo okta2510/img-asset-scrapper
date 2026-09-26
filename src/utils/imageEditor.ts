@@ -15,13 +15,31 @@ export function extractFormatFromUrl(url: string): string {
   try {
     const urlObj = new URL(url);
     const pathname = urlObj.pathname.toLowerCase();
-    if (pathname.endsWith(".png")) return "png";
-    if (pathname.endsWith(".webp")) return "webp";
-    if (pathname.endsWith(".gif")) return "gif";
-    if (pathname.endsWith(".svg")) return "svg";
-    return "jpeg"; // default fallback
+    const search = urlObj.search.toLowerCase();
+
+    if (pathname.endsWith(".ico") || search.includes("format=ico") || pathname.includes("favicon") || url.toLowerCase().includes(".ico")) return "ico";
+    if (pathname.endsWith(".png") || search.includes("format=png")) return "png";
+    if (pathname.endsWith(".webp") || search.includes("format=webp")) return "webp";
+    if (pathname.endsWith(".gif") || search.includes("format=gif")) return "gif";
+    if (pathname.endsWith(".svg") || search.includes("format=svg")) return "svg";
+    if (pathname.endsWith(".avif") || search.includes("format=avif")) return "avif";
+    if (pathname.endsWith(".bmp") || search.includes("format=bmp")) return "bmp";
+    if (pathname.endsWith(".tiff") || pathname.endsWith(".tif")) return "tiff";
+    if (pathname.endsWith(".jpg") || pathname.endsWith(".jpeg") || search.includes("format=jpg") || search.includes("format=jpeg")) return "jpeg";
+
+    if (urlObj.hostname.includes("unsplash.com") || urlObj.hostname.includes("picsum.photos") || urlObj.hostname.includes("pexels.com")) {
+      return "jpeg";
+    }
+
+    const match = pathname.match(/\.([a-z0-9]{3,4})$/);
+    if (match && match[1]) {
+      return match[1];
+    }
+
+    return "other";
   } catch (_) {
-    return "jpeg";
+    if (url.toLowerCase().includes(".ico") || url.toLowerCase().includes("favicon")) return "ico";
+    return "other";
   }
 }
 
@@ -158,3 +176,70 @@ export function triggerFileDownload(blob: Blob, fileName: string) {
   document.body.removeChild(tag);
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Converts any image Blob (JPG, WebP, SVG, GIF, etc.) to PNG Blob for clipboard compatibility
+ */
+async function convertBlobToPng(blob: Blob): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(blob);
+    img.crossOrigin = "anonymous";
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth || img.width || 800;
+        canvas.height = img.naturalHeight || img.height || 600;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("Unable to create canvas context"));
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob((pngBlob) => {
+          if (pngBlob) {
+            resolve(pngBlob);
+          } else {
+            reject(new Error("Canvas conversion to PNG failed"));
+          }
+        }, "image/png");
+      } catch (err) {
+        reject(err);
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Failed to load image for clipboard conversion"));
+    };
+
+    img.src = objectUrl;
+  });
+}
+
+/**
+ * Copies actual image binary data to the clipboard as PNG
+ * so it can be pasted into any external software or web app (Figma, Docs, WhatsApp, Slack, etc.)
+ */
+export async function copyImageToClipboard(imageUrl: string): Promise<void> {
+  const proxiedUrl = getProxiedUrl(imageUrl);
+  const res = await fetch(proxiedUrl);
+  if (!res.ok) {
+    throw new Error(`Failed to retrieve image: ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  const pngBlob = await convertBlobToPng(blob);
+
+  if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "image/png": pngBlob
+      })
+    ]);
+  } else {
+    throw new Error("Clipboard image copy is not supported in this browser environment");
+  }
+}
+
