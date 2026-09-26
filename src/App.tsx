@@ -462,7 +462,7 @@ function createResponse(obj) {
   };
 
   const handleClearHistory = () => {
-    saveHistoryLogs([]);
+    confirm("Are you sure you want to clear all local history logs? This action cannot be undone.") && saveHistoryLogs([]);
   };
 
   const handleDeleteHistoryItem = (id: string) => {
