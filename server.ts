@@ -12,16 +12,18 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Set up server-side Gemini client
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build",
+// Set up server-side Gemini client lazily to avoid cold-start errors if API key is unconfigured
+function getGeminiClient() {
+  const apiKey = process.env.GEMINI_API_KEY || "AIzaSy_placeholder_key";
+  return new GoogleGenAI({
+    apiKey: apiKey,
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
     },
-  },
-});
-console.debug(process.env.GEMINI_API_KEY);
+  });
+}
 
 // CORS & Preflight handler
 app.use((req, res, next) => {
@@ -103,8 +105,6 @@ function initLocalDB() {
     console.error("Error initializing local db", err);
   }
 }
-
-initLocalDB();
 
 // Read current local database
 function readLocalDB() {
@@ -1095,6 +1095,7 @@ app.post("/api/gemini/analyze", async (req, res) => {
       text: prompt || "Analyze this image and provide: 1. A short title 2. Five descriptive keyword tags separated by commas 3. A 2-sentence description of the content and its primary color palette."
     };
 
+    const ai = getGeminiClient();
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
       contents: { parts: [imagePart, textPart] }
