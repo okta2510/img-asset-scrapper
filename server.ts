@@ -176,7 +176,7 @@ app.post("/api/auth/register", async (req, res) => {
       return res.status(400).json({ success: false, error: "Username and password are required" });
     }
 
-    const targetScriptUrl = appScriptUrl || process.env.APP_SSCRIPT_URL;
+    const targetScriptUrl = process.env.APP_SSCRIPT_URL || appScriptUrl;
     if (targetScriptUrl && targetScriptUrl.trim().startsWith("http")) {
       console.log(`Routing registration to Google Sheets: ${username}`);
       const result = await postToAppsScript(targetScriptUrl.trim(), {
@@ -237,7 +237,7 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(400).json({ success: false, error: "Username and password are required" });
     }
 
-    const targetScriptUrl = appScriptUrl || process.env.APP_SSCRIPT_URL;
+    const targetScriptUrl = process.env.APP_SSCRIPT_URL || appScriptUrl;
     if (targetScriptUrl && targetScriptUrl.trim().startsWith("http")) {
       console.log(`Routing login verification to Google Sheets: ${username}`);
       const result = await postToAppsScript(targetScriptUrl.trim(), {
@@ -280,7 +280,7 @@ app.post("/api/auth/login", async (req, res) => {
 app.get("/api/config", (req, res) => {
   res.json({
     success: true,
-    appScriptUrl: process.env.APP_SSCRIPT_URL || ""
+    hasAppScript: Boolean(process.env.APP_SSCRIPT_URL)
   });
 });
 

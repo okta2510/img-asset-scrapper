@@ -59,14 +59,6 @@ export default function App() {
     return null;
   });
 
-  const [appScriptUrl, setAppScriptUrl] = useState(() => {
-    const envUrl = 
-      (import.meta.env?.APP_SSCRIPT_URL as string) || 
-      (typeof process !== "undefined" && (process.env?.APP_SSCRIPT_URL as string)) || 
-      "";
-    return envUrl || localStorage.getItem("imgrap_app_script_url") || "";
-  });
-
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authUsername, setAuthUsername] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -81,18 +73,23 @@ export default function App() {
   const [showSimulatedControls, setShowSimulatedControls] = useState(false);
   const [showAppscriptGuide, setShowAppscriptGuide] = useState(false);
 
-  // Fetch app script URL from server config if not already set by env
+  const [hasServerAppScript, setHasServerAppScript] = useState(false);
+
+  // Fetch app script configuration status from server
   useEffect(() => {
-    if (!appScriptUrl) {
-      fetch("/api/config")
-        .then((res) => res.json())
-        .then((data) => {
-          if (data?.appScriptUrl) {
-            setAppScriptUrl(data.appScriptUrl);
-          }
-        })
-        .catch(() => {});
-    }
+    // Purge any stale client-side stored script url for security
+    try {
+      localStorage.removeItem("imgrap_app_script_url");
+    } catch (_) {}
+
+    fetch("/api/config")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.hasAppScript) {
+          setHasServerAppScript(true);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -102,10 +99,6 @@ export default function App() {
       localStorage.removeItem("imgrap_logged_user");
     }
   }, [currentUser]);
-
-  useEffect(() => {
-    localStorage.setItem("imgrap_app_script_url", appScriptUrl);
-  }, [appScriptUrl]);
 
   const fetchSimulatedUsers = async () => {
     try {
@@ -159,8 +152,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: authUsername.trim(),
-          password: authPassword.trim(),
-          appScriptUrl: appScriptUrl.trim()
+          password: authPassword.trim()
         })
       });
       const data = await res.json();
@@ -195,8 +187,7 @@ export default function App() {
           username: authUsername.trim(),
           password: authPassword.trim(),
           email: authEmail.trim(),
-          fullName: authFullName.trim(),
-          appScriptUrl: appScriptUrl.trim()
+          fullName: authFullName.trim()
         })
       });
       const data = await res.json();
@@ -986,8 +977,7 @@ function createResponse(obj) {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                           username: currentUser.username,
-                          password: "admin" /* bypass query wrapper directly verifies fallback */,
-                          appScriptUrl: appScriptUrl.trim()
+                          password: "admin" /* bypass query wrapper directly verifies fallback */
                         })
                       });
                       const data = await res.json();
@@ -1072,7 +1062,7 @@ function createResponse(obj) {
                 {currentUser.fullName || currentUser.username}
               </span>
               <span className="text-[9px] uppercase font-bold text-indigo-550 tracking-widest leading-none mt-0.5 font-mono">
-                {appScriptUrl ? "Online" : "Offline"} | {currentUser.status === "APPROVED" ? "Active" : currentUser.status === "PENDING" ? "Pending" : "Rejected" }
+                {hasServerAppScript ? "Google Sheet Linked" : "Local Dev Sheet"} | {currentUser.status === "APPROVED" ? "Active" : currentUser.status === "PENDING" ? "Pending" : "Rejected" }
               </span>
             </div>
           </div>
