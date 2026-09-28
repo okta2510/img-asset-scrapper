@@ -38,7 +38,10 @@ export default function HistoryPanel({ history, onSelect, onDelete, onClear }: H
       <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-100">
         <div className="flex items-center gap-2">
           <History className="w-5 h-5 text-indigo-600" />
-          <h3 className="font-display font-bold text-lg text-slate-900">Activity Log</h3>
+          <div>
+            <h2 className="font-display font-bold text-base text-slate-900 leading-tight">Proses Penghapusan dan Monitoring Aset</h2>
+            <p className="text-[11px] text-slate-400 font-mono">Activity Log & Monitoring</p>
+          </div>
         </div>
         {history.length > 0 && (
           <button
@@ -52,7 +55,11 @@ export default function HistoryPanel({ history, onSelect, onDelete, onClear }: H
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto pr-1 max-h-[350px] md:max-h-[500px] space-y-3 custom-scrollbar">
+      <div className={`flex-1 pr-1.5 space-y-2.5 custom-scrollbar ${
+        history.length > 8 
+          ? "max-h-[590px] xl:max-h-[620px] overflow-y-auto" 
+          : "overflow-y-visible"
+      }`}>
         {history.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-center text-slate-400">
             <History className="w-8 h-8 opacity-30 mb-2 stroke-1" />

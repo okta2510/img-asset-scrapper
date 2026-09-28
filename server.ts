@@ -141,7 +141,7 @@ async function postToAppsScript(url: string, payload: any) {
   console.log(`Forwarding payload to Apps Script:`, url);
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     const res = await fetch(url, {
       method: "POST",
       headers: {
