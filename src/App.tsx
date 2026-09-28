@@ -1480,12 +1480,23 @@ function createResponse(obj) {
                 </div>
                 <div className="space-y-1 flex items-end justify-start md:justify-end">
                   <button
+                    type="button"
                     onClick={() => handleBulkDownload(images.filter(img => selectedUrls.has(img.url)))}
-                    disabled={selectedUrls.size === 0}
-                    className="w-full md:w-auto px-4 py-2 bg-indigo-650 hover:bg-indigo-700 disabled:bg-slate-100 disabled:text-slate-400 text-xs text-white rounded-xl font-semibold transition-all flex items-center justify-center gap-1.5 shadow-xs"
+                    disabled={selectedUrls.size === 0 || isZipping}
+                    className="w-full md:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-100 disabled:text-slate-400 text-xs text-white rounded-xl font-bold transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                    title="Download all selected images as a compressed ZIP file"
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    Pack Selected ({selectedUrls.size})
+                    {isZipping ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Packing ZIP...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-3.5 h-3.5" />
+                        Download as ZIP ({selectedUrls.size})
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -1688,6 +1699,28 @@ function createResponse(obj) {
                     >
                       Clear Selection
                     </button>
+
+                    {selectedUrls.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handleBulkDownload(images.filter(img => selectedUrls.has(img.url)))}
+                        disabled={isZipping}
+                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-100 disabled:text-slate-400 text-white font-bold rounded-lg transition-all flex items-center gap-1.5 text-[11px] shadow-xs cursor-pointer ml-auto"
+                        title="Download all currently selected images as a compressed ZIP file"
+                      >
+                        {isZipping ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            Packing ZIP...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-3.5 h-3.5" />
+                            Download Selected as ZIP ({selectedUrls.size})
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
 
                   <div className="text-slate-400 font-mono text-[11px] font-bold">
@@ -1949,6 +1982,44 @@ function createResponse(obj) {
         </section>
 
       </main>
+
+      {/* Floating Sticky Bulk Download Action Bar */}
+      {selectedUrls.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 backdrop-blur-md text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700/80 flex items-center gap-4 animate-fade-in">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-xs font-semibold text-slate-200">
+              <strong className="text-white font-mono text-sm">{selectedUrls.size}</strong> item{selectedUrls.size > 1 ? "s" : ""} selected
+            </span>
+          </div>
+          <div className="h-4 w-[1px] bg-slate-700" />
+          <button
+            type="button"
+            onClick={() => setSelectedUrls(new Set())}
+            className="text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={() => handleBulkDownload(images.filter(img => selectedUrls.has(img.url)))}
+            disabled={isZipping}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-emerald-600/30 cursor-pointer"
+          >
+            {isZipping ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Packing ZIP...
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                Download as ZIP ({selectedUrls.size})
+              </>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Global Context Modals */}
       {cropperTarget && (
