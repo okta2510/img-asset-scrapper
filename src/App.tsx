@@ -155,7 +155,16 @@ export default function App() {
           password: authPassword.trim()
         })
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        if (text.includes("A server error has occurred") || text.includes("FUNCTION_INVOCATION_FAILED")) {
+          throw new Error("Serverless error on host (Function timeout / invocation failure). Silakan periksa kembali konfigurasi host atau Apps Script.");
+        }
+        throw new Error(text.length > 200 ? text.substring(0, 200) + "..." : text || `Server error (HTTP ${res.status})`);
+      }
       if (data.success) {
         setCurrentUser(data.user);
         setAuthPassword("");
@@ -190,7 +199,16 @@ export default function App() {
           fullName: authFullName.trim()
         })
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        if (text.includes("A server error has occurred") || text.includes("FUNCTION_INVOCATION_FAILED")) {
+          throw new Error("Serverless error on host (Function timeout / invocation failure). Silakan periksa kembali konfigurasi host atau Apps Script.");
+        }
+        throw new Error(text.length > 200 ? text.substring(0, 200) + "..." : text || `Server error (HTTP ${res.status})`);
+      }
       if (data.success) {
         setRegSuccessMsg(`Success! Account "${authUsername.trim()}" successfully registered.`);
         setAuthMode("login");
@@ -980,7 +998,11 @@ function createResponse(obj) {
                           password: "admin" /* bypass query wrapper directly verifies fallback */
                         })
                       });
-                      const data = await res.json();
+                      const text = await res.text();
+                      let data: any = {};
+                      try {
+                        data = JSON.parse(text);
+                      } catch (_) {}
                       if (data.success) {
                         setCurrentUser(data.user);
                         if (data.user.status === "APPROVED") {

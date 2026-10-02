@@ -36,18 +36,17 @@ app.use((req, res, next) => {
   next();
 });
 
-// Fix Vercel rewrite URL stripping & restore original URL
-app.use((req: any, res, next) => {
-  const matchedPath = req.headers["x-matched-path"] || req.headers["x-vercel-matched-path"] || req.headers["x-forwarded-uri"];
-  if (matchedPath && typeof matchedPath === "string" && matchedPath.startsWith("/api")) {
-    req.url = matchedPath;
-  }
+// Debug incoming request path and headers on Vercel
+app.use((req, res, next) => {
+  console.log("[DEBUG REQUEST]", req.method, req.url, "originalUrl:", req.originalUrl, "x-matched-path:", req.headers["x-matched-path"], "x-forwarded-uri:", req.headers["x-forwarded-uri"], "x-vercel-matched-path:", req.headers["x-vercel-matched-path"]);
   next();
 });
 
 // Normalize request path so that both /api/foo and /foo match when routed via Vercel or locally
 app.use((req, res, next) => {
-  if (!req.url.startsWith("/api")) {
+  if (req.originalUrl && req.originalUrl.startsWith("/api") && !req.url.startsWith("/api")) {
+    req.url = req.originalUrl;
+  } else if (!req.url.startsWith("/api")) {
     if (
       req.url.startsWith("/auth") ||
       req.url.startsWith("/config") ||
@@ -62,15 +61,24 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: "5mb" }));
-app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+// Guard body-parser so it doesn't hang if Vercel serverless runtime already consumed the stream
 app.use((req: any, res, next) => {
-  if (typeof req.body === "string" && req.body.trim().startsWith("{")) {
-    try {
-      req.body = JSON.parse(req.body);
-    } catch (_) {}
+  if (req.body !== undefined && req.body !== null) {
+    if (typeof req.body === "string" && req.body.trim().startsWith("{")) {
+      try {
+        req.body = JSON.parse(req.body);
+      } catch (_) {}
+    }
+    return next();
   }
-  next();
+  express.json({ limit: "5mb" })(req, res, next);
+});
+
+app.use((req: any, res, next) => {
+  if (req.body !== undefined && req.body !== null) {
+    return next();
+  }
+  express.urlencoded({ extended: true, limit: "5mb" })(req, res, next);
 });
 
 const isVercel = Boolean(process.env.VERCEL);
@@ -141,13 +149,14 @@ async function postToAppsScript(url: string, payload: any) {
   console.log(`Forwarding payload to Apps Script:`, url);
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
       body: JSON.stringify(payload),
+      redirect: "follow",
       signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -1148,8 +1157,16 @@ async function startServer() {
   });
 }
 
-// Only start the HTTP listener if not running in a serverless environment (like Vercel)
-if (!process.env.VERCEL) {
+// Only start the HTTP listener if executed directly as the main entrypoint (not when imported as a serverless function)
+const isDirectRun = Boolean(
+  process.argv[1] && (
+    process.argv[1].endsWith("server.ts") ||
+    process.argv[1].endsWith("server.cjs") ||
+    process.argv[1].endsWith("server.js")
+  )
+);
+
+if (isDirectRun && !process.env.VERCEL && !process.env.VERCEL_ENV) {
   startServer();
 }
 

@@ -19,11 +19,10 @@ npm run lint    # tsc --noEmit  ← the ONLY verification step; there is no test
 
 - **One process, two modes.** `server.ts` mounts the API, then in non-production attaches Vite in `middlewareMode` (`server.ts:1130-1144`). There is no separate Vite dev server to start.
 - **Two deploy targets share one Express app:**
-  - Vercel: `api/index.ts` and `api/[...path].ts` both `export default app` from `../server`. `vercel.json` rewrites all `/api/*` → `/api` and everything else → `/index.html`. `process.env.VERCEL` disables the `app.listen()` call (`server.ts:1152`).
+  - Vercel: `api/index.ts` and `api/[...path].ts` both `export default app` from `../server`. Native catch-all routes `/api/*` to `api/[...path].ts` and non-api routes to `/index.html`. `process.env.VERCEL` disables the `app.listen()` call (`server.ts:1152`).
   - Node: `npm run build` + `npm start`.
-- **Two URL-normalization middlewares must be respected when adding routes** (`server.ts:40-63`):
-  - Restores `req.url` from the `x-matched-path` / `x-forwarded-uri` header (Vercel strips it).
-  - Prepends `/api` for paths starting with `/auth`, `/config`, `/scrape`, `/search`, `/proxy`, `/gemini`. **A new route family must be added to that list or it 404s behind the Vercel rewrite.**
+- **URL-normalization middleware must be respected when adding routes** (`server.ts`):
+  - Prepends `/api` if missing for paths starting with `/auth`, `/config`, `/scrape`, `/search`, `/proxy`, `/gemini`. **A new route family must be added to that list or it 404s behind Vercel routing.**
 - **Route ordering:** the `/api` 404 catch-all is at `server.ts:1125`, before Vite/static. New routes must be registered above it.
 - Client always calls same-origin relative paths (`/api/...`): `src/App.tsx` (config, auth, scrape, search) and `src/components/GeminiAnalyzeModal.tsx` (analyze). Proxy URLs are built in `src/utils/imageEditor.ts:11`.
 - `README.md` says `POST /api/scrape`; the executable truth is **GET** (`server.ts:427`, `App.tsx:533`). Trust the code.
