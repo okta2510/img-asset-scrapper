@@ -36,17 +36,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// Debug incoming request path and headers on Vercel
-app.use((req, res, next) => {
-  console.log("[DEBUG REQUEST]", req.method, req.url, "originalUrl:", req.originalUrl, "x-matched-path:", req.headers["x-matched-path"], "x-forwarded-uri:", req.headers["x-forwarded-uri"], "x-vercel-matched-path:", req.headers["x-vercel-matched-path"]);
-  next();
-});
-
-// Normalize request path so that both /api/foo and /foo match when routed via Vercel or locally
-app.use((req, res, next) => {
+// Normalize request path to ensure /api prefix is always present.
+// When Vercel native catch-all (api/[...path].ts) handles the request,
+// req.url is stripped of /api (e.g. /auth/login) but req.originalUrl is full (/api/auth/login).
+// When x-matched-path header is available (old rewrite mode), use that instead.
+app.use((req: any, res, next) => {
+  // Priority 1: Restore full URL from originalUrl if it has /api prefix
   if (req.originalUrl && req.originalUrl.startsWith("/api") && !req.url.startsWith("/api")) {
     req.url = req.originalUrl;
-  } else if (!req.url.startsWith("/api")) {
+    return next();
+  }
+  // Priority 2: Restore from x-matched-path header (old vercel rewrite mode)
+  const matchedPath = req.headers["x-matched-path"];
+  if (matchedPath && typeof matchedPath === "string" && matchedPath.startsWith("/api/")) {
+    req.url = matchedPath;
+    return next();
+  }
+  // Priority 3: Prepend /api if the path looks like a known API sub-route
+  if (!req.url.startsWith("/api")) {
     if (
       req.url.startsWith("/auth") ||
       req.url.startsWith("/config") ||
