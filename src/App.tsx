@@ -835,6 +835,14 @@ function createResponse(obj) {
             <p className="text-xs text-slate-500 font-medium max-w-md mx-auto">
               Platform pengelolaan aset tidak terpakai, barang bekas, dan scrap industri secara mudah, transparan, dan efisien.
             </p>
+            {hasServerAppScript && (
+              <div className="pt-1 flex items-center justify-center">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200/80 rounded-full text-xs font-semibold text-emerald-700 shadow-2xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Service Connected
+                </span>
+              </div>
+            )}
           </div>
 
           {regSuccessMsg && (
