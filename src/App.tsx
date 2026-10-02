@@ -102,7 +102,11 @@ export default function App() {
 
   const fetchSimulatedUsers = async () => {
     try {
-      const res = await fetch("/api/auth/users");
+      const headers: Record<string, string> = {};
+      if (currentUser?.token) {
+        headers["Authorization"] = `Bearer ${currentUser.token}`;
+      }
+      const res = await fetch("/api/auth/users", { headers });
       const data = await res.json();
       if (data.success) {
         setSimulatedUsers(data.users);
@@ -120,9 +124,13 @@ export default function App() {
 
   const handleUpdateSimulatedStatus = async (username: string, newStatus: string) => {
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (currentUser?.token) {
+        headers["Authorization"] = `Bearer ${currentUser.token}`;
+      }
       const res = await fetch("/api/auth/update-status", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ username, status: newStatus })
       });
       const data = await res.json();
@@ -548,7 +556,11 @@ function createResponse(obj) {
     }, 2800);
 
     try {
-      const response = await fetch(`/api/scrape?url=${encodeURIComponent(target)}`);
+      const headers: Record<string, string> = {};
+      if (currentUser?.token) {
+        headers["Authorization"] = `Bearer ${currentUser.token}`;
+      }
+      const response = await fetch(`/api/scrape?url=${encodeURIComponent(target)}`, { headers });
       clearInterval(quoteTimer);
 
       if (!response.ok) {
@@ -594,7 +606,11 @@ function createResponse(obj) {
         .filter(([_, enabled]) => enabled)
         .map(([name]) => name)
         .join(",");
-      const response = await fetch(`/api/search?q=${encodeURIComponent(kw)}&sources=${encodeURIComponent(activeEngines)}&region=${encodeURIComponent(targetRegion)}&custom_unserialized=${encodeURIComponent(JSON.stringify(customEngines))}`);
+      const headers: Record<string, string> = {};
+      if (currentUser?.token) {
+        headers["Authorization"] = `Bearer ${currentUser.token}`;
+      }
+      const response = await fetch(`/api/search?q=${encodeURIComponent(kw)}&sources=${encodeURIComponent(activeEngines)}&region=${encodeURIComponent(targetRegion)}&custom_unserialized=${encodeURIComponent(JSON.stringify(customEngines))}`, { headers });
       clearInterval(quoteTimer);
 
       if (!response.ok) {
@@ -1012,8 +1028,11 @@ function createResponse(obj) {
                           alert("Your registration is still PENDING confirmation. Please approve this account in Google Sheets to continue.");
                         }
                       } else {
-                        // Re-query local simulated db status
-                        const getRes = await fetch("/api/auth/users");
+                        const headers: Record<string, string> = {};
+                        if (currentUser?.token) {
+                          headers["Authorization"] = `Bearer ${currentUser.token}`;
+                        }
+                        const getRes = await fetch("/api/auth/users", { headers });
                         const d = await getRes.json();
                         const curr = d.users?.find((u: any) => u.username.toLowerCase() === currentUser.username.toLowerCase());
                         if (curr) {

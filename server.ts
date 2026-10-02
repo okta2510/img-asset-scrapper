@@ -6,11 +6,81 @@ import dotenv from "dotenv";
 import https from "https";
 import http from "http";
 import fs from "fs";
+import crypto from "crypto";
 
 dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || "assets-scrap-secret-key-2026";
+
+// Create token for authenticated users
+function generateToken(payload: { username: string; status: string }): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const exp = Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60); // 7 days expiration
+  const body = Buffer.from(JSON.stringify({ ...payload, exp })).toString("base64url");
+  const signature = crypto.createHmac("sha256", JWT_SECRET).update(`${header}.${body}`).digest("base64url");
+  return `${header}.${body}.${signature}`;
+}
+
+// Verify token signature and expiration
+function verifyToken(token: string): { username: string; status: string } | null {
+  try {
+    if (!token || typeof token !== "string") return null;
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const [header, body, signature] = parts;
+    const expectedSig = crypto.createHmac("sha256", JWT_SECRET).update(`${header}.${body}`).digest("base64url");
+    if (signature !== expectedSig) return null;
+
+    const decoded = JSON.parse(Buffer.from(body, "base64url").toString("utf-8"));
+    if (decoded.exp && decoded.exp < Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+    return { username: decoded.username, status: decoded.status };
+  } catch (_) {
+    return null;
+  }
+}
+
+// SSRF Safety Validator for remote URLs
+function isSafeUrl(targetUrl: string): boolean {
+  try {
+    if (!targetUrl || typeof targetUrl !== "string") return false;
+    const parsed = new URL(targetUrl.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host === "[::1]" ||
+      host.endsWith(".local") ||
+      host.endsWith(".internal") ||
+      host.endsWith(".lan")
+    ) {
+      return false;
+    }
+
+    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return false;
+    const match172 = host.match(/^172\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+    if (match172) {
+      const secondOctet = parseInt(match172[1], 10);
+      if (secondOctet >= 16 && secondOctet <= 31) return false;
+    }
+    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)) return false;
+    if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(host)) return false;
+    if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return false;
+    if (/^0\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return false;
+
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 
 // Set up server-side Gemini client lazily to avoid cold-start errors if API key is unconfigured
 function getGeminiClient() {
@@ -29,7 +99,7 @@ function getGeminiClient() {
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-auth-token");
   if (req.method === "OPTIONS") {
     return res.sendStatus(200);
   }
@@ -37,22 +107,16 @@ app.use((req, res, next) => {
 });
 
 // Normalize request path to ensure /api prefix is always present.
-// When Vercel native catch-all (api/[...path].ts) handles the request,
-// req.url is stripped of /api (e.g. /auth/login) but req.originalUrl is full (/api/auth/login).
-// When x-matched-path header is available (old rewrite mode), use that instead.
 app.use((req: any, res, next) => {
-  // Priority 1: Restore full URL from originalUrl if it has /api prefix
   if (req.originalUrl && req.originalUrl.startsWith("/api") && !req.url.startsWith("/api")) {
     req.url = req.originalUrl;
     return next();
   }
-  // Priority 2: Restore from x-matched-path header (old vercel rewrite mode)
   const matchedPath = req.headers["x-matched-path"];
   if (matchedPath && typeof matchedPath === "string" && matchedPath.startsWith("/api/")) {
     req.url = matchedPath;
     return next();
   }
-  // Priority 3: Prepend /api if the path looks like a known API sub-route
   if (!req.url.startsWith("/api")) {
     if (
       req.url.startsWith("/auth") ||
@@ -88,67 +152,132 @@ app.use((req: any, res, next) => {
   express.urlencoded({ extended: true, limit: "5mb" })(req, res, next);
 });
 
-const isVercel = Boolean(process.env.VERCEL);
-const ROOT_DB_PATH = path.join(process.cwd(), "users-local-db.json");
-const LOCAL_DB_PATH = isVercel ? path.join("/tmp", "users-local-db.json") : ROOT_DB_PATH;
+// Local DB configuration moved off /tmp to standard process directory or DATA_DIR with in-memory fallback
+const DB_DIR = process.env.DATA_DIR || process.cwd();
+const LOCAL_DB_PATH = path.join(DB_DIR, "users-local-db.json");
 
-// Make sure local DB exists
-function initLocalDB() {
+let memoryDbCache: { users: any[] } | null = null;
+
+const defaultUsersData = {
+  users: [
+    {
+      username: "admin",
+      password: "admin123",
+      email: "admin@yanginibeda.com",
+      fullName: "System Admin",
+      status: "APPROVED",
+      createdAt: new Date().toISOString()
+    },
+    {
+      username: "tester",
+      password: "tester123",
+      email: "tester@gmail.com",
+      fullName: "Pending Tester Profile",
+      status: "PENDING",
+      createdAt: new Date().toISOString()
+    }
+  ]
+};
+
+function readLocalDB() {
+  if (memoryDbCache) {
+    return memoryDbCache;
+  }
+
   try {
-    if (!fs.existsSync(LOCAL_DB_PATH)) {
-      if (fs.existsSync(ROOT_DB_PATH)) {
-        try {
-          const initialContent = fs.readFileSync(ROOT_DB_PATH, "utf-8");
-          fs.writeFileSync(LOCAL_DB_PATH, initialContent, "utf-8");
-          return;
-        } catch (_) {}
-      }
-      const defaultData = {
-        users: [
-          {
-            username: "admin",
-            password: "admin123",
-            email: "admin@yanginibeda.com",
-            fullName: "System Admin",
-            status: "APPROVED",
-            createdAt: new Date().toISOString()
-          },
-          {
-            username: "tester",
-            password: "tester123",
-            email: "tester@gmail.com",
-            fullName: "Pending Tester Profile",
-            status: "PENDING",
-            createdAt: new Date().toISOString()
-          }
-        ]
-      };
-      fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(defaultData, null, 2), "utf-8");
+    if (fs.existsSync(LOCAL_DB_PATH)) {
+      const data = fs.readFileSync(LOCAL_DB_PATH, "utf-8");
+      memoryDbCache = JSON.parse(data);
+      return memoryDbCache;
     }
   } catch (err) {
-    console.error("Error initializing local db", err);
+    console.error("Error reading local db from file:", err);
   }
-}
 
-// Read current local database
-function readLocalDB() {
+  memoryDbCache = JSON.parse(JSON.stringify(defaultUsersData));
   try {
-    initLocalDB();
-    const data = fs.readFileSync(LOCAL_DB_PATH, "utf-8");
-    return JSON.parse(data);
-  } catch (err) {
-    console.error("Error reading local db", err);
-    return { users: [] };
-  }
+    if (!fs.existsSync(LOCAL_DB_PATH)) {
+      fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(memoryDbCache, null, 2), "utf-8");
+    }
+  } catch (_) {}
+
+  return memoryDbCache;
 }
 
-// Write local database
 function writeLocalDB(data: any) {
+  memoryDbCache = data;
   try {
     fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   } catch (err) {
-    console.error("Error writing local db", err);
+    console.warn("Notice: could not write local DB to filesystem, state updated in memory:", err);
   }
+}
+
+// Authentication Middlewares
+function requireAuth(req: any, res: express.Response, next: express.NextFunction) {
+  let token: string | undefined;
+
+  const authHeader = req.headers.authorization || req.headers.Authorization;
+  if (authHeader && typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+    token = authHeader.substring(7).trim();
+  }
+  if (!token && req.headers["x-auth-token"]) {
+    token = String(req.headers["x-auth-token"]).trim();
+  }
+  if (!token && req.query?.token) {
+    token = String(req.query.token).trim();
+  }
+
+  if (!token) {
+    return res.status(401).json({ success: false, error: "Authentication required" });
+  }
+
+  const userPayload = verifyToken(token);
+  if (!userPayload) {
+    return res.status(401).json({ success: false, error: "Invalid or expired token" });
+  }
+
+  const db = readLocalDB();
+  const dbUser = db.users.find((u: any) => u.username.toLowerCase() === userPayload.username.toLowerCase());
+  const currentStatus = dbUser ? dbUser.status : userPayload.status;
+
+  if (currentStatus !== "APPROVED") {
+    return res.status(403).json({ success: false, error: `Account status is ${currentStatus}. Approved access required.` });
+  }
+
+  req.user = { ...userPayload, status: currentStatus };
+  next();
+}
+
+function requireAdmin(req: any, res: express.Response, next: express.NextFunction) {
+  let token: string | undefined;
+
+  const authHeader = req.headers.authorization || req.headers.Authorization;
+  if (authHeader && typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+    token = authHeader.substring(7).trim();
+  }
+  if (!token && req.headers["x-auth-token"]) {
+    token = String(req.headers["x-auth-token"]).trim();
+  }
+  if (!token && req.query?.token) {
+    token = String(req.query.token).trim();
+  }
+
+  if (!token) {
+    return res.status(401).json({ success: false, error: "Authentication required" });
+  }
+
+  const userPayload = verifyToken(token);
+  if (!userPayload) {
+    return res.status(401).json({ success: false, error: "Invalid or expired token" });
+  }
+
+  if (userPayload.username.toLowerCase() !== "admin") {
+    return res.status(403).json({ success: false, error: "Admin authorization required." });
+  }
+
+  req.user = userPayload;
+  next();
 }
 
 // Forward Request to Google Apps Script
@@ -261,6 +390,17 @@ app.post("/api/auth/login", async (req, res) => {
         username,
         password
       });
+      if (result && result.success && result.user) {
+        const userStatus = result.user.status || "APPROVED";
+        const token = generateToken({ username: result.user.username, status: userStatus });
+        return res.json({
+          ...result,
+          user: {
+            ...result.user,
+            token
+          }
+        });
+      }
       return res.json(result);
     }
 
@@ -277,6 +417,8 @@ app.post("/api/auth/login", async (req, res) => {
       return res.json({ success: false, error: "Incorrect password" });
     }
 
+    const token = generateToken({ username: user.username, status: user.status });
+
     return res.json({
       success: true,
       user: {
@@ -284,7 +426,8 @@ app.post("/api/auth/login", async (req, res) => {
         email: user.email,
         fullName: user.fullName,
         status: user.status,
-        createdAt: user.createdAt
+        createdAt: user.createdAt,
+        token
       }
     });
   } catch (error: any) {
@@ -300,7 +443,7 @@ app.get("/api/config", (req, res) => {
   });
 });
 
-app.get("/api/auth/users", (req, res) => {
+app.get("/api/auth/users", requireAdmin, (req, res) => {
   const db = readLocalDB();
   res.json({
     success: true,
@@ -314,7 +457,7 @@ app.get("/api/auth/users", (req, res) => {
   });
 });
 
-app.post("/api/auth/update-status", (req, res) => {
+app.post("/api/auth/update-status", requireAdmin, (req, res) => {
   const { username, status } = req.body;
   if (!username || !status) {
     return res.status(400).json({ success: false, error: "Username and status are required" });
@@ -346,7 +489,6 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 1200
   const id = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    // Try standard global fetch first
     const response = await fetch(url, {
       ...options,
       signal: options.signal || controller.signal,
@@ -355,7 +497,6 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 1200
   } catch (error: any) {
     console.warn(`Standard fetch failed for ${url} (Error: ${error.message || error}). Trying legacy safe HTTPS helper...`);
 
-    // Guard timeout / already aborted signal
     if (options.signal?.aborted || controller.signal.aborted) {
       throw new Error(`Request to ${url} was aborted/timed out.`);
     }
@@ -369,7 +510,6 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 1200
         const originalHeaders = options.headers || {};
         const headers: Record<string, string> = {};
         
-        // Standardize headers
         Object.entries(originalHeaders).forEach(([k, v]) => {
           headers[k] = String(v);
         });
@@ -385,7 +525,6 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 1200
         };
 
         if (isHttps) {
-          // Bypasses certain server-side client hello/handshake restrictions
           requestOptions.rejectUnauthorized = false;
           requestOptions.minVersion = "TLSv1";
         }
@@ -440,14 +579,13 @@ async function fetchWithTimeout(url: string, options: any = {}, timeoutMs = 1200
 }
 
 // 1. Scrape Images from one or more URLs
-app.get("/api/scrape", async (req, res) => {
+app.get("/api/scrape", requireAuth, async (req, res) => {
   const targetUrlParam = req.query.url as string;
   if (!targetUrlParam) {
     return res.status(400).json({ error: "URL query parameter is required" });
   }
 
   try {
-    // Split the input by commas, spaces, or lines to allow multiple source URLs
     const urlList = targetUrlParam
       .split(/[\s,\n]+/)
       .map((u) => u.trim())
@@ -468,7 +606,19 @@ app.get("/api/scrape", async (req, res) => {
 
     const uniqueUrls = new Set<string>();
 
-    const scrapePromises = urlList.slice(0, 5).map(async (targetUrl) => {
+    const safeUrlList = urlList.filter((u) => {
+      let testUrl = u;
+      if (!/^https?:\/\//i.test(testUrl)) {
+        testUrl = "https://" + testUrl;
+      }
+      return isSafeUrl(testUrl);
+    });
+
+    if (safeUrlList.length === 0) {
+      return res.status(400).json({ error: "Provided URLs are restricted or invalid" });
+    }
+
+    const scrapePromises = safeUrlList.slice(0, 5).map(async (targetUrl) => {
       try {
         let validatedUrl = targetUrl;
         if (!/^https?:\/\//i.test(targetUrl)) {
@@ -493,6 +643,8 @@ app.get("/api/scrape", async (req, res) => {
           try {
             if (!srcStr || srcStr.startsWith("data:")) return;
             const resolved = new URL(srcStr, validatedUrl).href;
+            if (!isSafeUrl(resolved)) return;
+
             if (!uniqueUrls.has(resolved)) {
               uniqueUrls.add(resolved);
 
@@ -520,7 +672,6 @@ app.get("/api/scrape", async (req, res) => {
           }
         };
 
-        // Extract img src
         $("img").each((_, element) => {
           const src = $(element).attr("src");
           const srcset = $(element).attr("srcset");
@@ -542,7 +693,6 @@ app.get("/api/scrape", async (req, res) => {
           }
         });
 
-        // Extract favicon and site icon links
         $('link[rel*="icon"]').each((_, element) => {
           const href = $(element).attr("href");
           if (href) {
@@ -550,7 +700,6 @@ app.get("/api/scrape", async (req, res) => {
           }
         });
 
-        // Extract links carrying direct image pathways
         $("a").each((_, element) => {
           const href = $(element).attr("href");
           const text = $(element).text() || "";
@@ -590,7 +739,7 @@ app.get("/api/scrape", async (req, res) => {
   }
 });
 
-// 2. Utility Multi-Engine Search Scrapers (Google, Bing, Unsplash)
+// 2. Utility Multi-Engine Search Scrapers (Google, Bing, Unsplash, etc.)
 async function scrapeGoogleImages(keyword: string, region?: string): Promise<any[]> {
   let url = `https://www.google.com/search?q=${encodeURIComponent(keyword)}&tbm=isch`;
   if (region && region !== "all") {
@@ -600,12 +749,10 @@ async function scrapeGoogleImages(keyword: string, region?: string): Promise<any
     else if (gl === "jp") hl = "ja";
     else if (gl === "fr") hl = "fr";
     url += `&gl=${gl}&hl=${hl}`;
-    // Also append site region cue to support old fallback parses
     if (gl !== "us" && gl !== "global") {
       url += `+site%3A.${gl}`;
     }
   }
-  // Botanical/standard bot-like agent to fetch old-school HTML easily parsed with Cheerio
   const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.35";
   try {
     const response = await fetchWithTimeout(url, {
@@ -622,7 +769,6 @@ async function scrapeGoogleImages(keyword: string, region?: string): Promise<any
       return text.trim().replace(/[^a-zA-Z0-9]/g, "_").toLowerCase().slice(0, 30);
     };
 
-    // Decode standard /imgres?imgurl= links containing direct high-res images
     $("a[href*='/imgres']").each((_, el) => {
       const href = $(el).attr("href");
       if (href) {
@@ -630,7 +776,7 @@ async function scrapeGoogleImages(keyword: string, region?: string): Promise<any
           const urlObj = new URL(href, "https://www.google.com");
           const imgUrl = urlObj.searchParams.get("imgurl");
           const alt = $(el).find("img").attr("alt") || $(el).text() || "";
-          if (imgUrl && !unique.has(imgUrl) && imgUrl.startsWith("http")) {
+          if (imgUrl && isSafeUrl(imgUrl) && !unique.has(imgUrl) && imgUrl.startsWith("http")) {
             unique.add(imgUrl);
             images.push({
               url: imgUrl,
@@ -644,10 +790,9 @@ async function scrapeGoogleImages(keyword: string, region?: string): Promise<any
       }
     });
 
-    // Fallback standard img links
     $("img").each((_, el) => {
       const src = $(el).attr("src") || $(el).attr("data-src") || $(el).attr("data-iurl");
-      if (src && src.startsWith("http") && !unique.has(src) && !src.includes("googlelogo") && !src.includes("gstatic.com")) {
+      if (src && src.startsWith("http") && isSafeUrl(src) && !unique.has(src) && !src.includes("googlelogo") && !src.includes("gstatic.com")) {
         unique.add(src);
         const alt = $(el).attr("alt") || "";
         images.push({
@@ -688,7 +833,6 @@ async function scrapeBingImages(keyword: string, region?: string): Promise<any[]
       return text.trim().replace(/[^a-zA-Z0-9]/g, "_").toLowerCase().slice(0, 30);
     };
 
-    // Bing Ultra Simple Container holds JSON metadata in attribute "m"
     $(".iusc, a[m]").each((_, el) => {
       const mAttr = $(el).attr("m");
       if (mAttr) {
@@ -696,7 +840,7 @@ async function scrapeBingImages(keyword: string, region?: string): Promise<any[]
           const mData = JSON.parse(mAttr);
           const imgUrl = mData.murl || mData.imgurl;
           const alt = mData.desc || mData.title || "";
-          if (imgUrl && !unique.has(imgUrl) && imgUrl.startsWith("http")) {
+          if (imgUrl && isSafeUrl(imgUrl) && !unique.has(imgUrl) && imgUrl.startsWith("http")) {
             unique.add(imgUrl);
             images.push({
               url: imgUrl,
@@ -707,11 +851,10 @@ async function scrapeBingImages(keyword: string, region?: string): Promise<any[]
             });
           }
         } catch (e) {
-          // JSON string regex fallback
           const murlMatch = mAttr.match(/"murl"\s*:\s*"([^"]+)"/);
           if (murlMatch && murlMatch[1]) {
             const imgUrl = murlMatch[1];
-            if (!unique.has(imgUrl) && imgUrl.startsWith("http")) {
+            if (isSafeUrl(imgUrl) && !unique.has(imgUrl) && imgUrl.startsWith("http")) {
               unique.add(imgUrl);
               images.push({
                 url: imgUrl,
@@ -726,10 +869,9 @@ async function scrapeBingImages(keyword: string, region?: string): Promise<any[]
       }
     });
 
-    // Direct fallback tags
     $("img").each((_, el) => {
       const src = $(el).attr("src") || $(el).attr("data-src");
-      if (src && src.startsWith("http") && !unique.has(src) && !src.includes("bing.com/sa/") && !src.includes("bing.com/th")) {
+      if (src && src.startsWith("http") && isSafeUrl(src) && !unique.has(src) && !src.includes("bing.com/sa/") && !src.includes("bing.com/th")) {
         unique.add(src);
         const alt = $(el).attr("alt") || "";
         images.push({
@@ -771,7 +913,7 @@ async function scrapeUnsplashImages(keyword: string): Promise<any[]> {
       const src = $(element).attr("src");
       const alt = $(element).attr("alt") || "";
       
-      if (src && src.includes("images.unsplash.com/photo-") && !unique.has(src)) {
+      if (src && src.includes("images.unsplash.com/photo-") && !unique.has(src) && isSafeUrl(src)) {
         let processedUrl = src;
         try {
           const urlObj = new URL(src);
@@ -814,7 +956,7 @@ async function scrapePexelsImages(keyword: string): Promise<any[]> {
     $("img").each((_, element) => {
       const src = $(element).attr("src") || $(element).attr("data-srcset") || "";
       const alt = $(element).attr("alt") || "";
-      if (src && src.includes("images.pexels.com/photos/") && !unique.has(src)) {
+      if (src && src.includes("images.pexels.com/photos/") && !unique.has(src) && isSafeUrl(src)) {
         let processedUrl = src;
         try {
           const urlObj = new URL(src);
@@ -855,7 +997,7 @@ async function scrapePixabayImages(keyword: string): Promise<any[]> {
     $("img").each((_, element) => {
       const src = $(element).attr("src") || $(element).attr("data-src") || "";
       const alt = $(element).attr("alt") || "";
-      if (src && (src.includes("pixabay.com/") || src.includes("cdn.pixabay.com/")) && !src.includes("favicon") && !unique.has(src)) {
+      if (src && (src.includes("pixabay.com/") || src.includes("cdn.pixabay.com/")) && !src.includes("favicon") && !unique.has(src) && isSafeUrl(src)) {
         unique.add(src);
         images.push({
           url: src,
@@ -887,7 +1029,7 @@ async function scrapeFlickrImages(keyword: string): Promise<any[]> {
     $("img").each((_, element) => {
       const src = $(element).attr("src") || $(element).attr("data-src") || "";
       const alt = $(element).attr("alt") || "";
-      if (src && !src.includes("buddyicon") && src.startsWith("http") && !unique.has(src)) {
+      if (src && !src.includes("buddyicon") && src.startsWith("http") && !unique.has(src) && isSafeUrl(src)) {
         unique.add(src);
         images.push({
           url: src,
@@ -906,6 +1048,7 @@ async function scrapeFlickrImages(keyword: string): Promise<any[]> {
 }
 
 async function scrapeCustomEngine(targetUrl: string, engineName: string, keyword: string): Promise<any[]> {
+  if (!isSafeUrl(targetUrl)) return [];
   const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
   try {
     const response = await fetchWithTimeout(targetUrl, { headers: { "User-Agent": userAgent } });
@@ -919,7 +1062,7 @@ async function scrapeCustomEngine(targetUrl: string, engineName: string, keyword
     $("img").each((_, element) => {
       const src = $(element).attr("src") || $(element).attr("data-src") || $(element).attr("data-srcset") || "";
       const alt = $(element).attr("alt") || "";
-      if (src && src.startsWith("http") && !src.includes("logo") && !unique.has(src)) {
+      if (src && src.startsWith("http") && !src.includes("logo") && !unique.has(src) && isSafeUrl(src)) {
         unique.add(src);
         images.push({
           url: src,
@@ -934,7 +1077,7 @@ async function scrapeCustomEngine(targetUrl: string, engineName: string, keyword
     $("a").each((_, element) => {
       const href = $(element).attr("href");
       const text = $(element).text() || "";
-      if (href && href.startsWith("http") && /\.(jpe?g|png|webp|svg)(\?.*)?$/i.test(href) && !unique.has(href)) {
+      if (href && href.startsWith("http") && /\.(jpe?g|png|webp|svg)(\?.*)?$/i.test(href) && !unique.has(href) && isSafeUrl(href)) {
         unique.add(href);
         images.push({
           url: href,
@@ -953,7 +1096,7 @@ async function scrapeCustomEngine(targetUrl: string, engineName: string, keyword
 }
 
 // 3. Multi-Engine Search Endpoint
-app.get("/api/search", async (req, res) => {
+app.get("/api/search", requireAuth, async (req, res) => {
   const keyword = req.query.q as string;
   if (!keyword) {
     return res.status(400).json({ error: "Search keyword is required" });
@@ -961,7 +1104,6 @@ app.get("/api/search", async (req, res) => {
 
   const region = req.query.region as string || "all";
 
-  // default engines: Google & Bing
   const sourcesParam = req.query.sources as string;
   const sources = sourcesParam
     ? sourcesParam.split(",").map(s => s.trim().toLowerCase())
@@ -984,7 +1126,6 @@ app.get("/api/search", async (req, res) => {
     if (sources.includes("pixabay")) promises.push(scrapePixabayImages(keyword));
     if (sources.includes("flickr")) promises.push(scrapeFlickrImages(keyword));
 
-    // Handle manual custom engines
     for (const engine of customEngines) {
       if (sources.includes(engine.id.toLowerCase())) {
         const queryUrl = engine.url
@@ -996,7 +1137,6 @@ app.get("/api/search", async (req, res) => {
 
     const resultsArray = await Promise.all(promises);
     
-    // Aggregate and deduplicate by image URL
     const combined: any[] = [];
     const uniqueUrls = new Set<string>();
 
@@ -1009,7 +1149,6 @@ app.get("/api/search", async (req, res) => {
       }
     }
 
-    // Falls back to Picsum Photos if all search streams end empty or block
     if (combined.length === 0) {
       console.log("Empty search result across streams, triggering local stock fallback table");
       for (let i = 1; i <= 15; i++) {
@@ -1033,7 +1172,6 @@ app.get("/api/search", async (req, res) => {
 
   } catch (error: any) {
     console.error("Search fetch error:", error);
-    // Graceful fallback to Picsum Photos
     const fallbackResults = [];
     for (let i = 1; i <= 12; i++) {
       const id = Math.floor(Math.random() * 1000) + 1;
@@ -1055,48 +1193,92 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// 3. CORS Proxy API to download and stream images directly, overcoming Canvas taint constraints
-app.get("/api/proxy", async (req, res) => {
+// Stream remote proxy response cleanly to prevent memory buffering spikes and eliminate SSRF
+function streamProxyUrl(targetUrl: string, res: express.Response, redirectsLeft = 3) {
+  if (redirectsLeft <= 0) {
+    return res.status(400).send("Too many redirects");
+  }
+  if (!isSafeUrl(targetUrl)) {
+    return res.status(400).send("Invalid or restricted target URL");
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(targetUrl);
+  } catch (_) {
+    return res.status(400).send("Malformed URL");
+  }
+
+  const client = parsedUrl.protocol === "https:" ? https : http;
+
+  const req = client.get(
+    targetUrl,
+    {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "image/*,*/*"
+      },
+      timeout: 15000
+    },
+    (originRes) => {
+      if (originRes.statusCode && originRes.statusCode >= 300 && originRes.statusCode < 400 && originRes.headers.location) {
+        try {
+          const redirectUrl = new URL(originRes.headers.location, targetUrl).href;
+          return streamProxyUrl(redirectUrl, res, redirectsLeft - 1);
+        } catch (_) {
+          return res.status(400).send("Invalid redirect URL");
+        }
+      }
+
+      if (!originRes.statusCode || originRes.statusCode < 200 || originRes.statusCode >= 300) {
+        return res.status(originRes.statusCode || 500).send(`Failed to fetch remote asset`);
+      }
+
+      const contentType = originRes.headers["content-type"] || "image/jpeg";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+      if (originRes.headers["content-length"]) {
+        res.setHeader("Content-Length", originRes.headers["content-length"]);
+      }
+
+      originRes.pipe(res);
+    }
+  );
+
+  req.on("error", (err: any) => {
+    console.error("Proxy streaming error:", err?.message || err);
+    if (!res.headersSent) {
+      res.status(500).send("Failed to stream image asset.");
+    }
+  });
+
+  req.on("timeout", () => {
+    req.destroy();
+    if (!res.headersSent) {
+      res.status(500).send("Proxy request timed out.");
+    }
+  });
+}
+
+// 4. CORS Proxy API to download and stream images directly
+app.get("/api/proxy", requireAuth, (req: any, res: express.Response) => {
   const imageUrl = req.query.url as string;
   if (!imageUrl) {
     return res.status(400).send("url parameter is required");
   }
 
-  try {
-    const originRes = await fetchWithTimeout(imageUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      }
-    }, 15000); // 15s image loader limit
-
-    if (!originRes.ok) {
-      return res.status(originRes.status || 500).send(`Failed to proxy image: ${originRes.statusText || "Error"}`);
-    }
-
-    const contentType = originRes.headers.get("content-type") || "image/jpeg";
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Cache-Control", "public, max-age=604800, immutable");
-
-    const arrayBuffer = await originRes.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    res.send(buffer);
-
-  } catch (err: any) {
-    console.error("Proxy fetching error:", err);
-    res.status(500).send("Proxy timed out or could not retrieve remote image asset secure connection.");
-  }
+  streamProxyUrl(imageUrl, res);
 });
 
-// 4. Gemini Smart Image Tagging / Metadata categorization helper
-app.post("/api/gemini/analyze", async (req, res) => {
+// 5. Gemini Smart Image Tagging / Metadata categorization helper
+app.post("/api/gemini/analyze", requireAuth, async (req, res) => {
   const { imageUrl, prompt } = req.body;
-  if (!imageUrl) {
-    return res.status(400).json({ error: "imageUrl is required" });
+  if (!imageUrl || !isSafeUrl(imageUrl)) {
+    return res.status(400).json({ error: "Valid imageUrl is required" });
   }
 
   try {
-    // We can fetch the image and provide it as inlineData
     const itemRes = await fetchWithTimeout(imageUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
     }, 12000);
@@ -1137,7 +1319,7 @@ app.post("/api/gemini/analyze", async (req, res) => {
   }
 });
 
-// Fallback for unmatched API endpoints so Vercel serverless functions return 404 JSON immediately
+// Fallback for unmatched API endpoints
 app.use("/api", (req, res) => {
   res.status(404).json({ success: false, error: `API endpoint ${req.originalUrl || req.url} not found` });
 });
@@ -1164,7 +1346,7 @@ async function startServer() {
   });
 }
 
-// Only start the HTTP listener if executed directly as the main entrypoint (not when imported as a serverless function)
+// Only start HTTP listener when executed directly
 const isDirectRun = Boolean(
   process.argv[1] && (
     process.argv[1].endsWith("server.ts") ||

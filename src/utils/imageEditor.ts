@@ -8,7 +8,17 @@ export function getProxiedUrl(originalUrl: string): string {
   if (originalUrl.startsWith("data:") || originalUrl.startsWith("blob:")) {
     return originalUrl;
   }
-  return `/api/proxy?url=${encodeURIComponent(originalUrl)}`;
+  let token = "";
+  try {
+    const saved = localStorage.getItem("imgrap_logged_user");
+    if (saved) {
+      const user = JSON.parse(saved);
+      token = user.token || "";
+    }
+  } catch (_) {}
+
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
+  return `/api/proxy?url=${encodeURIComponent(originalUrl)}${tokenParam}`;
 }
 
 export function extractFormatFromUrl(url: string): string {

@@ -1,22 +1,15 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '');
-  const appScriptUrl = env.APP_SSCRIPT_URL || process.env.APP_SSCRIPT_URL || '';
-
+export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
-    },
-    define: {
-      'process.env.APP_SSCRIPT_URL': JSON.stringify(appScriptUrl),
-      'import.meta.env.APP_SSCRIPT_URL': JSON.stringify(appScriptUrl),
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

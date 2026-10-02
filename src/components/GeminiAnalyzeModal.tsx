@@ -17,9 +17,23 @@ export default function GeminiAnalyzeModal({ imageUrl, onClose, onTagsExtracted 
     setLoading(true);
     setError(null);
     try {
+      let token = "";
+      try {
+        const saved = localStorage.getItem("imgrap_logged_user");
+        if (saved) {
+          const user = JSON.parse(saved);
+          token = user.token || "";
+        }
+      } catch (_) {}
+
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
       const response = await fetch("/api/gemini/analyze", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           imageUrl,
           prompt: "Identify: 1. A short creative title for this photo (e.g. 'Golden Hour Forest'). 2. Exactly 5 descriptive word tags (separated by commas). 3. Brief summary of elements, mood, and dominant primary colors."
